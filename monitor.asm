@@ -71,7 +71,7 @@ START:
 	CALL	SERIAL_PUTS
 	
 	
-	LD	HL, START	
+	LD	HL, DISTEST	
 	LD	(CURADDR), HL
 	;CALL	DISINST
 	
@@ -89,11 +89,11 @@ DLOOP:
 	
 	
 	
-CMD_LOOP:
+;CMD_LOOP:
 	;CALL 	DISP_PROMPT	; Display prompt + cur addr
 	;CALL	GET_LINE	; Read in user input
 	;CALL	PARSE_LINE	; Parse line and do actions
-	JR	CMD_LOOP
+;	JR	CMD_LOOP
 	
 	
 HALT:	
@@ -103,6 +103,34 @@ HALT:
 #endlocal
 
 
+DISTEST:
+	LD	A, 0
+	LD	B, 1
+	LD	HL, $1234
+	LD	IX, $5678
+	LD	IY, $9ABC
+	LD	A, (HL)
+	LD	A, (IX+1)
+	LD	A, (IY-$71)
+	RR	(HL)
+	RL	A
+	LD	(HL), BC
+	LD	(IY-$12), BC
+	LD	(IX), DE
+	INC	IX
+	DEC	IY
+	INC	IXL
+	DEC	IXH
+	LD	IXH, $21
+	NOP
+	NOP
+	RR	(IX)	; DDCB prefix instruction, not yet implemented
+	; Glitches out since order is DDCB.disp.op instead of DDCB.op.disp
+	RL	(IY)	; FDCB prefix instruction, not yet implemented
+	; Glitches out since order is FDCB.disp.op instead of FDCB.op.disp
+	NOP
+	NOP
+	NOP
 ;---------------------------------------
 ; Get a line of user input into LBUF
 GET_LINE:

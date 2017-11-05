@@ -3,8 +3,8 @@
 ; z80 opcode decoding based on:
 ; http://www.z80.info/decoding.htm
 ;
-; TODO: Handling of DD and FD prefixes (For IX and IY regs)
-;
+; TODO: Test handling of DD and FD prefixes
+; TODO: Special handling of DDCB and FDCB 'illegal' ops
 ;
 
 ; RAM Variables
@@ -125,6 +125,7 @@ DONE:
 DONE_NOINC:
 	LD	A, 0		; Null terminate string
 	CALL	PUSHCH	
+	CALL	PREFIXADJUST	; Handle any $DD/$FD prefix changes
 	RET			; Actual return
 HALT:
 	LD	BC, SHALT
@@ -177,6 +178,121 @@ IMM16P:				; Imm16 with post string in BC
 	POP	BC
 	CALL	PUSHSTR		
 	JR	DONE
+
+
+;--------
+; Replace HL/H/L/(HL) with IX/IXH/IXL/(IX+d) or IY/IYH/IYL/(IY+d) if the
+; prefix byte calls for it
+;  
+PREFIXADJUST:
+#local
+	LD	A, (PREFIX)
+	AND	A
+	RET	Z		; If no prefix, then no change
+	CP	$DD
+	JR	Z, XPRE		; Replace prefix byte with letter representation
+YPRE:	LD	A, 'Y'
+	JR	PRE
+XPRE:	LD	A, 'X'
+PRE:	LD	(PREFIX), A
+	
+	
+	
+	PUSH	HL		; Save next byte
+	; Re-walk disline, skip to operands
+	LD	HL, DISLINE
+WALK:
+	LD	A, (HL)
+	INC	HL
+	CP	OSEP		; Look for operand seperator
+	JR	NZ, WALK
+	; Now need to find occurances of HL/H/L/(HL)
+WALK2:
+	LD	A, (HL)
+	CP	'H'
+	JR	Z, FOUNDH
+	CP	'L'
+	JR	Z, FOUNDL
+	CP	'('
+	JR	Z, INDIR
+	AND	A		; Null terminator
+	JR	Z, END
+NEXT:
+	INC	HL
+	JR	WALK2
+FOUNDH:
+	; Peek if this is HL
+	INC	HL
+	LD	A, (HL)
+	DEC	HL
+	CP	'L'
+	JR	Z, FOUNDHL
+FOUNDL:
+	; Replace H/L with IXH/IYH or IXL/IYL
+	CALL	PUSHGAP		; Moves H/L forward
+	LD	A, (PREFIX)	; Get prefix letter X/Y
+	LD	(HL), A		; Store prefix now XH/YH or XL/YL
+	CALL	PUSHGAP
+	LD	A, 'I'
+	LD	(HL), A		; Now IXH/IYH or IXL/IYL
+	JR	END
+FOUNDHL:
+	; Replace HL with IX or IY
+	LD	A, 'I'
+	LD	(HL), A		; Now IL
+	INC	HL
+	LD	A, (PREFIX)
+	LD	(HL), A		; Now IX/IY
+	JR	END
+INDIR:
+	INC	HL
+	LD	A, (HL)
+	CP	'H'		; Only care about (HL)
+	JR	NZ, NEXT	; Something else, skip
+	; We found (H, must be (HL)
+	; Need to replace with (IX+d)
+	LD	A, 'I'
+	LD	(HL), A		; Now (IL)
+	INC	HL
+	LD	A, (PREFIX)
+	LD	(HL), A		; Now (IX) or (IY)
+	INC	HL
+	CALL	PUSHGAP		; (IX )
+	CALL	PUSHGAP		; (IX  )
+	CALL	PUSHGAP		; (IX   )
+	CALL	PUSHGAP		; (IX    )   Enough to fit (IX+$20) or (IX-$10)
+	LD	(DISLINECUR), HL; Save pointer (byte after X/Y)
+	POP	HL		; Restore byte pointer (we need a displacement
+	LD	B, (HL)		; Displacement byte
+	INC	HL
+	PUSH	HL		; Save byte
+	CALL	PUSHSIGNHEX8	; Push signed displacement
+	; Fall into END
+END:
+	POP	HL		; Restore next byte
+	RET
+#endlocal
+
+
+;--------
+; Insert space into disline
+;  HL - current spot, make space here, move forward till null
+PUSHGAP:
+#local
+	PUSH	HL
+	LD	A, (HL)		; Current spot
+NEXT:
+	INC	HL		; Next spot
+	LD	B, (HL)		; Save next spot
+	LD	(HL), A		; Save cur into next
+	AND	A		; Check if we wrote the null
+	JR	Z, FOUNDNULL	
+	LD	A, B		; Make values from next the new cur
+	JR	NEXT
+FOUNDNULL:
+	POP	HL		; Restore back to starting spot
+	RET
+#endlocal
 
 
 ;-------
@@ -302,6 +418,30 @@ PUSHDEC1:
 	LD	(DISLINECUR), HL
 	POP	HL
 	RET
+
+	
+
+;--------
+; Print a 1-byte hex number as signed with sign prefix + or -
+PUSHSIGNHEX8:
+#local
+	LD	A, B
+	AND	A
+	JP	P, POS
+NEG:
+	LD	A, '-'
+	CALL	PUSHCH
+	LD	A, B
+	NEG
+	ADD	1		; Convert from negative to positive
+	LD	B, A
+	JR	PUSHHEX8	; Tail call push number
+POS:
+	LD	A, '+'
+	CALL	PUSHCH
+	JR	PUSHHEX8	; Tail call, push number
+#endlocal
+
 
 ;--------
 ; Print a 1-byte hex number
@@ -582,6 +722,13 @@ X3ASS:
 	CP	3
 	JR	Z, IN8
 	; 1 is $CB prefix, ignored. 4-7 are simple
+	CP	5 		; EX DE, HL is special in that DD/FD doesn't affect
+	JR	NZ, NOADJ
+	PUSH	AF
+	XOR	A
+	LD	(PREFIX), A	; Pretend like we had no prefix byte if we're EX DE, HL
+	POP	AF
+NOADJ:
 	AND	3		; Turn 4-7 to 0-3
 	LD	BC, X3ASSTBL
 	CALL	PUSHINDEXED
@@ -900,6 +1047,7 @@ NOLD:
 #endlocal
 ;---------------------------------------
 	
+OSEP	equ ' '
 	
 X0_ZJMP:
 	DW RELASS		; 00 ... 000
