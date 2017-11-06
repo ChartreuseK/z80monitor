@@ -449,8 +449,7 @@ NEG:
 	LD	A, '-'
 	CALL	PUSHCH
 	LD	A, B
-	NEG
-	ADD	1		; Convert from negative to positive
+	NEG			; Convert from negative to positive
 	LD	B, A
 	JR	PUSHHEX8	; Tail call push number
 POS:
