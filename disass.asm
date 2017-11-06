@@ -3,8 +3,7 @@
 ; z80 opcode decoding based on:
 ; http://www.z80.info/decoding.htm
 ;
-; TODO: Test handling of DD and FD prefixes
-; TODO: Special handling of DDCB and FDCB 'illegal' ops
+; TODO: Try and optimize to < 2048 bytes (Personal goal)
 ;
 
 ; RAM Variables
