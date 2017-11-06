@@ -115,8 +115,13 @@ DISTEST:
 	RR	(HL)
 	RL	A
 	LD	(HL), BC
+	
+	
+	
 	LD	(IY-$12), BC
+	
 	LD	(IX), DE
+	
 	INC	IX
 	DEC	IY
 	INC	IXL
@@ -124,13 +129,13 @@ DISTEST:
 	LD	IXH, $21
 	NOP
 	NOP
-	RR	(IX)	; DDCB prefix instruction, not yet implemented
-	; Glitches out since order is DDCB.disp.op instead of DDCB.op.disp
-	RL	(IY)	; FDCB prefix instruction, not yet implemented
-	; Glitches out since order is FDCB.disp.op instead of FDCB.op.disp
+	RR	(IX)	; DDCB prefix instruction
+	RL	(IY)	; FDCB prefix instruction
 	NOP
 	NOP
-	DB	$FD,$DD,$FD
+	DB	$FD
+	DB	$DD
+	DB	$FD
 	RETI
 	OUT	(C), A
 	IN	A, (C)
@@ -140,6 +145,10 @@ DISTEST:
 	CPD
 	INIR
 	OTDR
+	SET 	5, (IX+$12), A	; DDCB illegal opcode
+	RR 	(IY-$62), E	; FDCB legal? opcode
+	BIT 	3, (IY+$7E)	; FDCB legal opcode
+	DB	$DD,$CB,$00,$7B	; IX - prefix for BIT should be normal (BIT 7, E)
 	NOP
 	NOP
 	NOP

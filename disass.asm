@@ -9,14 +9,15 @@
 
 ; RAM Variables
 #data _RAM
-DISLINE:	DS 20		; Buffer for outputted line
+DISLINE:	DS 22		; Buffer for outputted line
+	; Longest possible line is of the form: 'LD A, SET 1, (IX+$AB)'
+	; 22 bytes including null terminator
 DISLINECUR:	DS 2		; Cur index
 PREFIX:		DS 1		; Current prefix
 STADDR:		DS 2		; Start address for displacements
+SVDISP:		DS 1		; Saved displacement for DDCB and FDCB
 
 #code _ROM
-	DW	0xAA55		; Just a temporary marker so I can determine the code
-				; size
 
 ; (HL) points to first byte of instruction
 ; Returns HL as pointing to next byte after instruction
@@ -827,6 +828,9 @@ RESTART:
 ; CB prefixed opcodes
 CB_PRE:
 #local
+	LD	A, (PREFIX)
+	AND	A
+	JR	NZ, PRE_CB_PRE
 	INC	HL		; Read in opcode
 	LD	A, (HL)
 	AND	$C0		; Test X only
@@ -865,6 +869,110 @@ X0:
 #endlocal
 ;---------------------------------------
 
+;--------
+; Prefixed CB - Order is now PRE.CB.DISP.OP 
+;		instead of   CB.OP
+; Includes oddball illegal opcodes, doesn't use standard DONE termination
+PRE_CB_PRE:
+#local
+	INC	HL
+	LD	A, (HL)		; Read in displacement
+	LD	(SVDISP), A	; Save displacement
+	INC	HL		
+	LD	A, (HL)		; Read in opcode
+	AND	$C0		; Test X only
+	JR	Z, X0
+	CP	$40
+	JR	Z, X1
+	CP	$80
+	JR	Z, X2
+	; Fall into X3
+X3:	; SET opcodes
+	CALL	EXTESTZ6
+	JR	Z, X3_6
+	; Opcodes of form LD r[z], SET y, (IX+d)
+	CALL	PUSHLDRZ
+X3_6:	; No side-effect load
+	LD	BC, SSET
+X2X3COM:
+	CALL	PUSHSTROSEP	
+	LD	A, (HL)		; Reload opcode
+	CALL	EXTRACT_Y
+	CALL	PUSHDEC1	; Bit #
+	CALL	PUSHCOMMA
+	JR	INDEX_D
+;--------
+X2:	; RES opcodes
+	CALL	EXTESTZ6
+	JR	Z, X2_6
+	; Opcodes of form LD r[z], RES y, (IX+d)
+	CALL	PUSHLDRZ
+X2_6:	; No side-effect load
+	LD	BC, SRES
+	JR	X2X3COM
+;--------
+X1:	; BIT opcodes
+	LD	BC, SBIT
+	CALL	PUSHSTROSEP
+	LD	A, (HL)		; Reload opcode
+	CALL	EXTRACT_Y
+	CALL	PUSHDEC1	; Bit #
+	CALL	PUSHCOMMA
+	CALL	EXTESTZ6
+	JR	Z, INDEX_D	; If would be (HL), push (IX/IY+d) instead
+	LD	BC, REG8
+	CALL	PUSHINDEXED	; r[z]
+	JR	EXIT
+;--------
+X0:	; Rotate opcodes
+	CALL	EXTESTZ6
+	JR	Z, X0_6
+	; Opcodes of form LD r[z], rot[y] (IX+d)
+	CALL	PUSHLDRZ
+X0_6:	; No side-effect load
+	LD	A, (HL)
+	CALL	EXTRACT_Y
+	LD	BC, ROT		; rot[y]
+	CALL	PUSHINDEXED
+	; Fall into INDEX_D
+;--------
+INDEX_D:	; Push (IX/IY+d)
+	LD	BC, SBKTI
+	CALL	PUSHSTR
+	LD	A, (PREFIX)
+	CP	$DD
+	JR	Z, IXPRE
+IYPRE:	LD	A, 'Y'
+	JR	INDEXCOM
+IXPRE:	LD	A, 'X'
+INDEXCOM:
+	CALL	PUSHCH
+	LD	A, (SVDISP)
+	LD	B, A
+	CALL	PUSHSIGNHEX8
+	LD	A, ')'
+	CALL	PUSHCH
+EXIT:
+	INC	HL		; Next byte
+	LD	A, 0
+	CALL	PUSHCH		; Push null terminator
+	RET			; Exit DISINST
+;--------
+; Z in A already, helper subroutine
+PUSHLDRZ:
+	LD	BC, SLD
+	CALL	PUSHSTRSP	; SP here since real op has OSEP
+	LD	BC, REG8	; r[z]
+	CALL	PUSHINDEXED
+	JP	PUSHCOMMA	; Tail call
+;--------
+EXTESTZ6:
+	LD	A, (HL)		; Reload opcode
+	CALL	EXTRACT_Z
+	CP	6		; 6 would have been (HL), normal 'legal' opcode
+	RET
+#endlocal
+;---------------------------------------
 
 ;--------
 ; ED prefixed opcodes
@@ -1178,7 +1286,7 @@ SOUTNOC:DM "OUT",OSEP,"(C), 0"+$80
 SOUTC:	DM "OUT",OSEP,"(C),"+$80
 SSBCHL:	DM "SBC",OSEP,"HL,"+$80
 SADCHL:	DM "ADC",OSEP,"HL,"+$80
-
+SBKTI:	DM "(I"+$80
 AAF:
 	DM "RLCA"+$80
 	DM "RRCA"+$80
