@@ -15,7 +15,8 @@ PREFIX:		DS 1		; Current prefix
 STADDR:		DS 2		; Start address for displacements
 
 #code _ROM
-	DW	0xAA55
+	DW	0xAA55		; Just a temporary marker so I can determine the code
+				; size
 
 ; (HL) points to first byte of instruction
 ; Returns HL as pointing to next byte after instruction
@@ -33,7 +34,7 @@ START:
 	CP	$CB		; Check for prefixes
 	JP	Z, CB_PRE
 	CP	$DD		
-	JR	Z, DD_PRE
+	JP	Z, DD_PRE
 	CP	$ED
 	JP	Z, ED_PRE
 	CP	$FD
@@ -65,6 +66,8 @@ X2:	; ALU[y], r[z] ALU + register
 	CALL	EXTRACT_Y
 	LD	BC, ALU
 	CALL	PUSHINDEXED
+	LD	A, OSEP
+	CALL	PUSHCH
 	LD	A, (HL)
 	CALL	EXTRACT_Z
 	LD	BC, REG8
@@ -76,7 +79,7 @@ X1:	; 8-bit loading. (Exception LD (HL), (HL) = HALT)
 	CP	$76		; 0166 - HALT
 	JR	Z, HALT
 	LD	BC, SLD
-	CALL	PUSHSTRSP
+	CALL	PUSHSTROSEP
 	CALL	EXTRACT_Y
 	LD	BC, REG8
 	CALL	PUSHINDEXED
@@ -110,7 +113,7 @@ FD_PRE:
 	JR	Z, ADDPREFIX
 	; Double prefix, mark first as a NONI and return
 	LD	BC, SNONI
-	CALL	PUSHINDEXED
+	CALL	PUSHSTR
 	POP	AF
 	JR	DONE_NOINC
 ADDPREFIX:
@@ -348,6 +351,19 @@ FOUND:
 	JP	PUSHSTR		; Tail call
 #endlocal
 
+
+;--------
+; Push a high bit terminated string to buffer with operand seperator
+;  BC - String
+PUSHSTROSEP:
+	CALL 	PUSHSTR
+	PUSH	AF
+	LD	A, OSEP
+	CALL	PUSHCH
+	POP	AF
+	RET
+	
+
 ;--------
 ; Push a high bit terminated string to buffer with space after
 ;  BC - String
@@ -502,7 +518,7 @@ RELASS:
 	; 00.1xx.000 = JR cc[xx],  d
 JRCC:
 	LD	BC, SJR
-	CALL	PUSHSTRSP
+	CALL	PUSHSTROSEP
 	LD	A, (HL)
 	CALL	EXTRACT_Y
 	AND	$03		; y-4
@@ -518,11 +534,11 @@ EXAFAF:
 	JP	PUSHDONE
 DJNZ:
 	LD	BC, SDJNZ
-	CALL	PUSHSTRSP
+	CALL	PUSHSTROSEP
 	JP	DISP8		; 8 bit displacement
 JRUN:
 	LD	BC, SJR
-	CALL	PUSHSTRSP
+	CALL	PUSHSTROSEP
 	JP	DISP8		; 8 bit displacement
 #endlocal
 
@@ -542,7 +558,7 @@ ADDHL:				; Add to HL
 	JP	DONE
 LD16:				; 16-bit load immediate
 	LD	BC, SLD
-	CALL	PUSHSTRSP
+	CALL	PUSHSTROSEP
 	LD	BC, REG16
 	CALL	PUSHINDEXED
 	CALL	PUSHCOMMA
@@ -616,11 +632,11 @@ INCDEC16:
 	JR	NZ, DEC16
 INC16:
 	LD	BC, SINC
-	CALL	PUSHSTRSP
+	CALL	PUSHSTROSEP
 	JR	REG
 DEC16:	
 	LD	BC, SDEC
-	CALL	PUSHSTRSP
+	CALL	PUSHSTROSEP
 REG:
 	CALL	EXTRACT_P	; Extract reg #
 	LD	BC, REG16	; RP
@@ -638,7 +654,7 @@ INC8:
 DEC8:
 	LD	BC, SDEC
 IDCOMMON:
-	CALL	PUSHSTRSP
+	CALL	PUSHSTROSEP
 	CALL	EXTRACT_Y
 	LD	BC, REG8
 	CALL	PUSHINDEXED
@@ -648,7 +664,7 @@ IDCOMMON:
 ; LD 8-bit immediate
 LDI8:
 	LD	BC, SLD
-	CALL	PUSHSTRSP
+	CALL	PUSHSTROSEP
 	CALL	EXTRACT_Y
 	LD	BC, REG8
 	CALL	PUSHINDEXED
@@ -672,7 +688,7 @@ ASSAF:
 ; Return with condition
 RETCC:
 	LD	BC, SRET
-	CALL	PUSHSTRSP
+	CALL	PUSHSTROSEP
 	CALL	EXTRACT_Y
 	LD	BC, CC
 	CALL	PUSHINDEXED
@@ -686,7 +702,7 @@ POPVAR:
 	JR	NZ, VARIOUS
 	; POP rp2[p]
 	LD	BC, SPOP
-	CALL	PUSHSTRSP
+	CALL	PUSHSTROSEP
 	CALL	EXTRACT_P
 	LD	BC, REG16_2
 	CALL	PUSHINDEXED
@@ -702,7 +718,7 @@ VARIOUS:
 ; Conditional Jump
 JPCC:
 	LD	BC, SJP
-	CALL	PUSHSTRSP
+	CALL	PUSHSTROSEP
 	CALL	EXTRACT_Y
 	LD	BC, CC
 	CALL	PUSHINDEXED
@@ -735,7 +751,7 @@ NOADJ:
 	JP	DONE
 JPIMM:
 	LD	BC, SJP
-	CALL	PUSHSTRSP
+	CALL	PUSHSTROSEP
 	JP	IMM16
 OUT8:
 	LD	BC, SOUT
@@ -755,7 +771,7 @@ IN8:
 CCCALL:
 	CALL	EXTRACT_Y
 	LD	BC, SCALL
-	CALL	PUSHSTRSP
+	CALL	PUSHSTROSEP
 	LD	BC, CC
 	CALL	PUSHINDEXED
 	CALL	PUSHCOMMA
@@ -770,11 +786,11 @@ PUSHVAR:
 	JP	Z, PUSH
 	; p = 0. (1-3 are DD, ED, and FD prefixes)
 	LD	BC, SCALL
-	CALL	PUSHSTRSP
+	CALL	PUSHSTROSEP
 	JP	IMM16	
 PUSH:
 	LD	BC, SPUSH
-	CALL	PUSHSTRSP
+	CALL	PUSHSTROSEP
 	CALL 	EXTRACT_P
 	LD	BC, REG16_2
 	CALL	PUSHINDEXED
@@ -787,6 +803,8 @@ ALUIMM:
 	CALL	EXTRACT_Y
 	LD	BC, ALU
 	CALL	PUSHINDEXED
+	LD	A, OSEP
+	CALL	PUSHCH
 	JP	IMM8
 	
 ;--------
@@ -794,7 +812,7 @@ ALUIMM:
 RESTART:
 	CALL	EXTRACT_Y
 	LD	BC, SRESET
-	CALL	PUSHSTRSP
+	CALL	PUSHSTROSEP
 	ADD	A		; Y*2
 	ADD	A		; Y*4
 	ADD	A		; Y*8
@@ -821,7 +839,7 @@ CB_PRE:
 X3:
 	LD	BC, SBIT
 COMMON:
-	CALL	PUSHSTRSP
+	CALL	PUSHSTROSEP
 	LD	A, (HL)
 	CALL	EXTRACT_Y
 	CALL	PUSHDEC1
@@ -852,6 +870,18 @@ X0:
 ; ED prefixed opcodes
 ED_PRE:
 #local
+	; Check for invalid prefix combo
+	LD	A, (PREFIX)
+	AND	A
+	JR	Z, NOPRE
+	; Otherwise push out NONI for the invalid prefix 
+	; Next entry will re-read the ED with no prefix
+	LD	BC, SNONI
+	CALL	PUSHSTR
+	LD	A, 0		; Null terminate string
+	CALL	PUSHCH
+	RET			; Ret from DISINST
+NOPRE:
 	INC	HL		; Read in opcode
 	LD	A, (HL)
 	AND	$C0		; Test X only
@@ -885,7 +915,8 @@ X2:	; Block instructions
 	LD	A, (HL)
 	CALL	EXTRACT_Y
 	CP	4
-	JR	NC, X2INVAL	; y < 4 invalid
+	JR	C, X2INVAL	; y < 4 invalid
+	AND	3		; y-4
 	ADD	A		; Y*2
 	ADD	A		; Y*4
 	LD	B, A		; Save
@@ -906,9 +937,10 @@ INP16:
 	JR	Z, NOREG
 	; IN r[y], (C)
 	LD	BC, SINP
-	CALL	PUSHSTRSP
+	CALL	PUSHSTROSEP
 	LD	BC, REG8
 	CALL	PUSHINDEXED
+	CALL	PUSHCOMMA
 	LD	BC, SINDC
 	CALL	PUSHSTR
 	JP	DONE
@@ -987,7 +1019,7 @@ STORE:
 	JP	DONE
 LOAD:
 	LD	BC, SLD
-	CALL	PUSHSTRSP
+	CALL	PUSHSTROSEP
 	CALL	EXTRACT_P
 	LD	BC, REG16
 	CALL	PUSHINDEXED
@@ -1025,7 +1057,7 @@ COMMON:
 ; Set interrupt mode
 SETI:
 	LD	BC, SIM
-	CALL	PUSHSTRSP
+	CALL	PUSHSTROSEP
 	CALL	EXTRACT_Y
 	LD	BC, IM
 	CALL	PUSHINDEXED
@@ -1039,7 +1071,7 @@ EDASSORT:
 	CP	4
 	JR	NC, NOLD
 	LD	BC, SLD
-	CALL	PUSHSTRSP
+	CALL	PUSHSTROSEP
 NOLD:
 	LD	BC, EDASSTBL
 	CALL	PUSHINDEXED
@@ -1047,7 +1079,7 @@ NOLD:
 #endlocal
 ;---------------------------------------
 	
-OSEP	equ ' '
+OSEP	equ $09	;TAB
 	
 X0_ZJMP:
 	DW RELASS		; 00 ... 000
@@ -1081,16 +1113,16 @@ EDX1_ZJMP:
 	
 	
 X3ASSTBL:
-	DM "EX (SP), HL"+$80
-	DM "EX DE, HL"+$80
+	DM "EX",OSEP,"(SP), HL"+$80
+	DM "EX",OSEP,"DE, HL"+$80
 	DM "DI"+$80
 	DM "EI"+$80
 	
 VARIOUSTBL:
 SRET:	DM "RET"+$80
 	DM "EXX"+$80
-	DM "JP HL"+$80
-	DM "LD SP, HL"+$80
+	DM "JP",OSEP,"HL"+$80
+	DM "LD",OSEP,"SP, HL"+$80
 	
 EDASSTBL:
 	DM "I, A"+$80 ; Already prefixed by LD
@@ -1106,16 +1138,16 @@ SLD:	DM "LD"+$80
 SHALT:	DM "HALT"+$80
 SNOP:	DM "NOP"+$80
 SDJNZ:	DM "DJNZ"+$80
-SEXAFAF:DM "EX AF, AF'"+$80
+SEXAFAF:DM "EX",OSEP,"AF, AF'"+$80
 SJR:	DM "JR"+$80
 SJP:	DM "JP"+$80
-SADDHL:	DM "ADD HL,"+$80
+SADDHL:	DM "ADD",OSEP,"HL,"+$80
 SINC:	DM "INC"+$80
 SDEC:	DM "DEC"+$80
 SPOP:	DM "POP"+$80
-SOUT:	DM "OUT ("+$80
+SOUT:	DM "OUT",OSEP,"("+$80
 SEOUT:	DM "), A"+$80
-SIN:	DM "IN A, ("+$80
+SIN:	DM "IN",OSEP,"A, ("+$80
 SINP:	DM "IN"+$80
 SEBKT:	DM ")"+$80
 SCALL:	DM "CALL"+$80
@@ -1134,18 +1166,18 @@ SBKTC:	DM ")" ; Fall into SCOMMA
 SCOMMA:	DM ","+$80
 
 SRESET: DM "RST"+$80
-SLDIN:	DM "LD ("+$80
-SLDHLIN:DM "LD HL, ("+$80
-SLDAIN: DM "LD A" ; Fall into SCOMBKT
+SLDIN:	DM "LD",OSEP,"("+$80
+SLDHLIN:DM "LD",OSEP,"HL, ("+$80
+SLDAIN: DM "LD",OSEP,"A" ; Fall into SCOMBKT
 SCOMBKT:DM ", ("+$80
 SEHL:	DM "), HL"+$80
 SEA:	DM "), A"+$80
-SINNOC:	DM "IN (C)"+$80
+SINNOC:	DM "IN",OSEP,"(C)"+$80
 SINDC:	DM "(C)"+$80
-SOUTNOC:DM "OUT (C), 0"+$80
-SOUTC:	DM "OUT (C),"+$80
-SSBCHL:	DM "SBC HL,"+$80
-SADCHL:	DM "ADC HL,"+$80
+SOUTNOC:DM "OUT",OSEP,"(C), 0"+$80
+SOUTC:	DM "OUT",OSEP,"(C),"+$80
+SSBCHL:	DM "SBC",OSEP,"HL,"+$80
+SADCHL:	DM "ADC",OSEP,"HL,"+$80
 
 AAF:
 	DM "RLCA"+$80
@@ -1186,23 +1218,23 @@ CC:
 	DM "P"+$80
 	DM "M"+$80
 ALU:
-	DM "ADD A, "+$80
-	DM "ADC A, "+$80
-	DM "SUB "+$80
-	DM "SBC A, "+$80
-	DM "AND "+$80
-	DM "XOR "+$80
-	DM "OR "+$80
-	DM "CP "+$80
+	DM "ADD",OSEP,"A,"+$80
+	DM "ADC",OSEP,"A,"+$80
+	DM "SUB"+$80
+	DM "SBC",OSEP,"A,"+$80
+	DM "AND"+$80
+	DM "XOR"+$80
+	DM "OR"+$80
+	DM "CP"+$80
 ROT:
-	DM "RLC "+$80
-	DM "RRC "+$80
-	DM "RL "+$80
-	DM "RR "+$80
-	DM "SLA "+$80
-	DM "SRA "+$80
-	DM "SLL "+$80
-	DM "SRL "+$80
+	DM "RLC",OSEP+$80
+	DM "RRC",OSEP+$80
+	DM "RL",OSEP+$80
+	DM "RR",OSEP+$80
+	DM "SLA",OSEP+$80
+	DM "SRA",OSEP+$80
+	DM "SLL",OSEP+$80
+	DM "SRL",OSEP+$80
 IM:
 	DM "0"+$80
 	DM "0/1"+$80
@@ -1230,3 +1262,5 @@ BLI:
 	DM "CPDR"+$80 
 	DM "INDR"+$80 
 	DM "OTDR"+$80	
+
+DISASSLEN	equ . - DISINST

@@ -102,7 +102,7 @@ HALT:
 	JP	HALT
 #endlocal
 
-
+; A bunch of opcodes for testing the disassembler
 DISTEST:
 	LD	A, 0
 	LD	B, 1
@@ -128,6 +128,19 @@ DISTEST:
 	; Glitches out since order is DDCB.disp.op instead of DDCB.op.disp
 	RL	(IY)	; FDCB prefix instruction, not yet implemented
 	; Glitches out since order is FDCB.disp.op instead of FDCB.op.disp
+	NOP
+	NOP
+	DB	$FD,$DD,$FD
+	RETI
+	OUT	(C), A
+	IN	A, (C)
+	DB	$ED,$70 ;0160 - IN (C)
+	OUT	(C), 0
+	LDI
+	CPD
+	INIR
+	OTDR
+	NOP
 	NOP
 	NOP
 	NOP

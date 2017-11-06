@@ -10,7 +10,7 @@ SERIAL_INIT:
 	
 	LD	A, $80			
 	OUT	(SER_ACR), A	; Baud Rate Set #2
-	LD	A, $44		; BB for 9600, 44 for 300
+	LD	A, $BB		; BB for 9600, 44 for 300
 	OUT	(SER_CSRA), A	; 300 Tx and Rx
 	LD	A, $13			
 	OUT	(SER_MRA), A	; 8 bit, no parity
