@@ -2,40 +2,43 @@
 ; Write a null terminated string to LCD
 ; Addr to string in HL
 LCDPUTS:
+#local
 	LD	A,(HL)
 	AND	0xFF				
-	JR	Z, LCDPUTS_END	; End if we hit null terminator
+	JR	Z, END	; End if we hit null terminator
 	SCF			; Set carry flag 
 	CALL	LCDWRITE	; Write char, (Carry set at end)
 	INC	HL
 	JR	LCDPUTS		; Loop till we hit null
-LCDPUTS_END:
+END:
+#endlocal
 	RET
 	
 ;---------------------------------------
 ; Write A in binary to the LCD
 LCDBIN:
+#local
 	LD	B, 8
 	LD	C, A
-LCDBINL:
+LOOP:
 	LD	A, C
 	AND	0x80
-	JR	Z, LCDBIN0
-LCDBIN1:
+	JR	Z, DIG0
+DIG1:
 	PUSH 	BC
 	LD	A, '1'
-	JR	LCDBINN
-LCDBIN0:
+	JR	COMMON
+DIG0:
 	PUSH	BC
 	LD	A, '0'
-LCDBINN:
+COMMON:
 	SCF
 	CALL	LCDWRITE
 	POP	BC
 	SLA	C
 	
-	DJNZ	LCDBINL
-	
+	DJNZ	LOOP
+#endlocal
 	RET
 	
 ;---------------------------------------

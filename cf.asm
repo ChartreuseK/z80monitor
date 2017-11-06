@@ -1,6 +1,6 @@
 ;---------------------------------------
 ; Init CF card
-CF_INIT:
+CF_INIT::
 	CALL	CF_LBUSY
 	LD	A, 0x01		; 8-bit mode
 	OUT	(CF_FEAT_ERR), A; Write to features reg
@@ -50,7 +50,8 @@ CF_LDATARDY:
 ; Reads one 512-byte sector to RAM
 ; HL - Address to start storing to
 ; Var LBA: - 24 bit LBA address to read from
-CF_READ:
+CF_READ::
+#local
 	CALL	CF_LBUSY	; Load LBA address to access
 	LD	A, (LBA+0)
 	OUT	(CF_LBA0), A
@@ -65,7 +66,7 @@ CF_READ:
 	OR	0xE0		; Set high bits to indicate LBA mode
 	OUT	(CF_LBA3), A
 	
-CF_READ_TRY:
+TRY:
 	CALL	CF_LRDY
 	LD	A, 0x20		; Read sector
 	OUT	(CF_CMD_STAT), A		
@@ -73,11 +74,11 @@ CF_READ_TRY:
 	
 	LD	A, (CF_CMD_STAT); Check status
 	AND	0x01		; Check error bit
-	JP	NZ, CF_READ_TRY
+	JP	NZ, TRY
 	
 	PUSH	HL		; Save start address
 	LD	B, 0		; Read 256 words/512 bytes
-CF_RD_LOOP:
+LOOP:
 	CALL	CF_LDATARDY	; Read even byte
 	IN	A, (CF_DATA)
 	LD	(HL), A
@@ -88,7 +89,8 @@ CF_RD_LOOP:
 	LD	(HL), A
 	INC 	HL
 	
-	DJNZ	CF_RD_LOOP
+	DJNZ	LOOP
 	
 	POP	HL		; Restore start address
 	RET
+#endlocal

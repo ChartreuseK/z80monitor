@@ -6,9 +6,11 @@
 ; TODO: Try and optimize to < 2048 bytes (Personal goal)
 ;
 
+#local
+
 ; RAM Variables
 #data _RAM
-DISLINE:	DS 22		; Buffer for outputted line
+DISLINE::	DS 22		; Buffer for outputted line
 	; Longest possible line is of the form: 'LD A, SET 1, (IX+$AB)'
 	; 22 bytes including null terminator
 DISLINECUR:	DS 2		; Cur index
@@ -21,7 +23,7 @@ SVDISP:		DS 1		; Saved displacement for DDCB and FDCB
 ; (HL) points to first byte of instruction
 ; Returns HL as pointing to next byte after instruction
 ; (Assumes HL is STADDR for instruction)
-DISINST:
+DISINST::
 #local
 	LD	BC, DISLINE
 	LD	(DISLINECUR), BC ; Reset string index
@@ -1368,5 +1370,7 @@ BLI:
 	DM "CPDR"+$80 
 	DM "INDR"+$80 
 	DM "OTDR"+$80	
+
+#endlocal
 
 DISASSLEN	equ . - DISINST

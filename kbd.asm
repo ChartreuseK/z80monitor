@@ -1,29 +1,31 @@
 ;---------------------------------------
 ; Get Scancode
 KBD_GETSCAN:
-	LD	B, 0x01			; Start at row 0
-	LD	A, 0			; Row offset in decode table
-KBD_GETSCAN_LOOP:
+#local
+	LD	B, 0x01		; Start at row 0
+	LD	A, 0		; Row offset in decode table
+LOOP:
 	LD	C, PORT_KBD
 	IN	C, (C)			
-	JR	NZ, KBD_GETSCAN_FND	; Found a keypress
-	ADD	A, 8			; Next row
-	SLA	B			; Shift to next row
-	JR	NC, KBD_GETSCAN_LOOP	; Loop till we find a keycode or run out of rows
-	LD	A, 0			; No key pressed
+	JR	NZ, FND		; Found a keypress
+	ADD	A, 8		; Next row
+	SLA	B		; Shift to next row
+	JR	NC, LOOP	; Loop till we find a keycode or run out of rows
+	LD	A, 0		; No key pressed
 	RET
-KBD_GETSCAN_FND:
-	LD	B, A			; Save our row offset into B
+FND:
+	LD	B, A		; Save our row offset into B
 	LD	A, 0	
-KBD_GETSCAN_FND_LOOP:
-	RR	C			; Rotate C until we find the bit# of the match
-	JR	C, KBD_GETSCAN_BIT
-	INC	A			; Next bit
-	JR	KBD_GETSCAN_FND_LOOP	; Fine to loop since we know a bit is set
-KBD_GETSCAN_BIT:
-	OR	A, B			; Or with the row offset 
+FND_LOOP:
+	RR	C		; Rotate C until we find the bit# of the match
+	JR	C, BIT
+	INC	A		; Next bit
+	JR	FND_LOOP	; Fine to loop since we know a bit is set
+BIT:
+	OR	A, B		; Or with the row offset 
 	RET
-	
+#endlocal
+
 ;---------------------------------------
 ; Convert scancode to ASCII(ish)
 SCAN2KEY:

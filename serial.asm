@@ -38,31 +38,35 @@ SERIAL_READ:
 ;---------------------------------------
 ; Write a character from serial port A, blocking till sent
 SERIAL_WRITE:
+#local
 	PUSH	BC
 	LD	B, A
-SERIAL_WRITE_L:
+LOOP:
 	IN	A, (SER_SRA)
 	BIT	2, A
-	JP	Z, SERIAL_WRITE_L
+	JP	Z, LOOP
 	LD	A, B
 	OUT	(SER_TBA), A
 	
 	POP	BC
 	RET
+#endlocal
 ;---------------------------------------
 
 ;---------------------------------------
 ; Write a null terminated string to Serial A
 ; Addr to string in HL
 SERIAL_PUTS:
+#local
 	LD	A,(HL)
 	AND	0xFF				
-	JR	Z, SERIAL_PUTS_END	; End if we hit null terminator
+	JR	Z, END		; End if we hit null terminator
 	CALL	SERIAL_WRITE	; Write char
 	INC	HL
 	JR	SERIAL_PUTS	; Loop till we hit null
-SERIAL_PUTS_END:
+END:
 	RET
+#endlocal
 
 SERIAL_NL:
 	LD	HL, SNL
