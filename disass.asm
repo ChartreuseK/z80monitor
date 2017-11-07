@@ -115,7 +115,11 @@ FD_PRE:
 	LD	BC, SNONI
 	CALL	PUSHSTR
 	POP	AF
-	JR	DONE_NOINC
+	LD	(PREFIX), A	; Store new prefix
+	; Need to terminate ourselves since we don't want PREFIXADJUST to run
+	XOR	A
+	CALL	PUSHCH		; Null terminate string
+	RET			; Actual return
 ADDPREFIX:
 	POP	AF
 	LD	(PREFIX), A	; Store new prefix
@@ -126,7 +130,7 @@ ADDPREFIX:
 DONE:
 	INC	HL
 DONE_NOINC:
-	LD	A, 0		; Null terminate string
+	XOR	A		; Null terminate string
 	CALL	PUSHCH	
 	CALL	PREFIXADJUST	; Handle any $DD/$FD prefix changes
 	RET			; Actual return
