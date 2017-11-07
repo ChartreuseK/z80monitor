@@ -10,7 +10,7 @@ SERIAL_INIT:
 	
 	LD	A, $80			
 	OUT	(SER_ACR), A	; Baud Rate Set #2
-	LD	A, $44		; BB for 9600, 44 for 300
+	LD	A, $BB		; BB for 9600, 44 for 300
 	OUT	(SER_CSRA), A	; 300 Tx and Rx
 	LD	A, $13			
 	OUT	(SER_MRA), A	; 8 bit, no parity
@@ -74,3 +74,42 @@ SERIAL_NL:
 	
 SNL:
 	DB 10,13,0
+
+
+
+;--------
+; Print a 1-byte hex number
+;  B - number
+SERIAL_WRHEX8:
+	LD	A, '$'
+	CALL	SERIAL_WRITE
+SERIAL_WRHEX8_NP:
+	LD	A, B
+	SRL	A
+	SRL	A
+	SRL	A
+	SRL	A	; Extract high nybble
+	CALL	SERIAL_WRNYB
+	LD	A, B
+	AND	$0F
+	; Fall into PUSHNYB (Tail call)
+;--------
+; Push a nybble from A (low 4-bits, high must be 0)
+SERIAL_WRNYB:
+#local
+	ADD	'0'
+	CP	'9'+1	; Check if A-F
+	JR	C, NOFIX
+	ADD	'A'-('9'+1)	; Diff between 'A' and ':'
+NOFIX:
+	JP	SERIAL_WRITE		; Tail call
+#endlocal
+	
+	
+;--------
+; Print a 2-byte hex number
+;  BC - number
+SERIAL_WRHEX16:
+	CALL	SERIAL_WRHEX8
+	LD	B, C
+	JP	SERIAL_WRHEX8_NP	; Tail call

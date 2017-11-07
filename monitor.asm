@@ -71,12 +71,12 @@ START:
 	CALL	SERIAL_PUTS
 	
 	
-	LD	HL, DISTEST	
+	LD	HL, HALT
 	LD	(CURADDR), HL
 	;CALL	DISINST
 	
 	
-	LD	B, 50
+	LD	B, 60
 DLOOP:
 	PUSH	BC
 	CALL	CMD_DISASS
@@ -87,7 +87,10 @@ DLOOP:
 	LD	HL, STR_AFTDIS
 	CALL	SERIAL_PUTS
 	
-	
+RLOOP:
+	;CALL	SERIAL_READ
+	;CALL	SERIAL_WRITE
+	;JP	RLOOP
 	
 ;CMD_LOOP:
 	;CALL 	DISP_PROMPT	; Display prompt + cur addr
@@ -145,11 +148,16 @@ DISTEST:
 	CPD
 	INIR
 	OTDR
+TEST:
 	SET 	5, (IX+$12), A	; DDCB illegal opcode
 	RR 	(IY-$62), E	; FDCB legal? opcode
 	BIT 	3, (IY+$7E)	; FDCB legal opcode
 	DB	$DD,$CB,$00,$7B	; IX - prefix for BIT should be normal (BIT 7, E)
 	NOP
+	
+	JR	TEST
+	JP	PO, TEST
+	JR	NC, TEST
 	NOP
 	NOP
 	NOP
@@ -301,6 +309,11 @@ CMD_DEPOSIT:
 CMD_DISASS:
 	; Test disassemble at curaddr
 	LD	HL, (CURADDR)
+	LD	BC, HL
+	CALL	SERIAL_WRHEX16
+	LD	A, $09	; TAB
+	CALL	SERIAL_WRITE
+	
 	CALL	DISINST
 	LD	(CURADDR), HL	; Next instruction
 	; Print string

@@ -15,7 +15,6 @@ DISLINE::	DS 22		; Buffer for outputted line
 	; 22 bytes including null terminator
 DISLINECUR:	DS 2		; Cur index
 PREFIX:		DS 1		; Current prefix
-STADDR:		DS 2		; Start address for displacements
 SVDISP:		DS 1		; Saved displacement for DDCB and FDCB
 
 #code _ROM
@@ -30,7 +29,6 @@ DISINST::
 	LD	A, 0
 	LD	(DISLINE), A	; Start with null
 	LD	(PREFIX), A	; Reset prefix
-	LD	(STADDR), HL	; Save address for displacements
 START:
 	LD	A, (HL)	
 	CP	$CB		; Check for prefixes
@@ -145,7 +143,7 @@ DISP8:
 	SBC	A, A		; 0 if no carry, 0xFF if carry
 	LD	B, A		; B is now sign extended C
 	PUSH	HL		; Save current addr
-	LD	HL, (STADDR)	; Load starting addr
+	INC	HL		; Displacents start from next inst
 	ADD	HL, BC		; Add displacement to get target addr
 	LD	BC, HL		; Swap into BC
 	POP	HL		; Restore curaddr
