@@ -407,6 +407,8 @@ SER_CRB 	equ DUART+10    ; Commands Register B       (W)
 SER_RBB 	equ DUART+11    ; Reciever Buffer B         (R)
 SER_TBB 	equ DUART+11    ; Transmitter Buffer B      (W)
 SER_IVR 	equ DUART+12 	; Interrupt Vector Register (R/W)
+SER_IPR		equ DUART+13	; Input port register (R)
+SER_OPR		equ DUART+13	; Output port register (W)
 
 ;---------------------------------------
 ; Delay constant for DELAY_MS
@@ -449,7 +451,7 @@ STR_AFTDIS:
 #data _RAM
 
 LBA:		DS 4	; 4-byte (28-bit) little-endian LBA address for CF
-LAST_KEY:	DS 1	; Last pressed key
+
 
 LBUFLEN		equ 80
 LBUF:		DS LBUFLEN+1	; Line buffer (space for null)
