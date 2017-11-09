@@ -1,6 +1,67 @@
 ;
 ; Various parsing functions
 
+
+;--------
+; Parse up to 4 hex digits into a word.
+; HL - points to first ascii digit
+; On return HL points to next byte after digit
+; Return word in BC
+;----
+; Carry set on invalid digit, HL points to invalid digit
+PARSENUM:
+#local
+	LD	BC, 0
+	LD	A, (HL)
+	
+	CALL	HEX2NYB
+	JR	C, INVAL	; Must be at least 1 nybble
+	LD	C, A	
+	
+	INC	HL		; Nyb 2?
+	LD	A, (HL)
+	CALL	HEX2NYB
+	JR	C, DONE		; If not a nybble 
+	CALL	SHIFTBCNYB	; Make room in BC
+	OR	C		; 
+	LD	C, A		; Or in new nybble
+	
+	INC	HL		; Nyb 3?
+	LD	A, (HL)
+	CALL	HEX2NYB
+	JR	C, DONE		; If not a nybble 
+	CALL	SHIFTBCNYB	; Make room in BC
+	OR	C		; 
+	LD	C, A		; Or in new nybble
+	
+	INC	HL		; Nyb 4?
+	LD	A, (HL)
+	CALL	HEX2NYB
+	JR	C, DONE		; If not a nybble 
+	CALL	SHIFTBCNYB	; Make room in BC
+	OR	C		; 
+	LD	C, A		; Or in new nybble
+	SCF
+DONE:
+	CCF
+	RET
+INVAL:
+	SCF
+	RET
+
+SHIFTBCNYB:
+	SLA	C		
+	RL	B
+	SLA	C		
+	RL	B
+	SLA	C		
+	RL	B
+	SLA	C		
+	RL	B
+	RET
+#endlocal
+	RET
+
 ;--------
 ; Convert 4 ASCII hex digits to a word, must be uppercase
 ; HL - points to first ascii digit

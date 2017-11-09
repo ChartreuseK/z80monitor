@@ -244,7 +244,7 @@ MATCH:
 CMD_CHADDR:
 	INC	HL		; Skip over command
 	CALL	SKIPWHITE	; Skip any whitespace
-	CALL	HEX2WORD	; Parse up to 2 byte address
+	CALL	PARSENUM	; Parse up to a 16-bit address
 	LD	A, C
 	LD	(CURADDR), A	;
 	LD	A, B
@@ -256,17 +256,129 @@ CMD_CHADDR:
 ;	E		- Enter interactive examine mode
 ;	E 8		- Examine 8 bytes from curaddr
 CMD_EXAMINE:
+#local
+	INC	HL
+	CALL	SKIPWHITE
+	CALL	PARSENUM	; Check if we got a number
+	JR	C, INTERACTIVE	; If no number, enter interactive mode
+	
+	; Count in BC
 	LD	HL, (CURADDR)
+	
+MORE:
+	; Check if BC > 16
+	LD	A, B
+	AND	A
+	JR	NZ, ENOUGH
+	LD	A, C
+	AND	A
+	JR	Z, DONE
+	CP	HDROWL
+	JR	C, SHORT
+	
+ENOUGH:
+	; Subtract 16 from BC
+	LD	A, -HDROWL
+	ADD	C
+	LD	C, A
+	LD	A, $FF
+	ADC	B		; Decrement B if no overflow happened
+	LD	B, A
+	
+	LD	A, HDROWL
+	CALL	HEXDUMPROW	; Dump row, HL is advanced by count
+	JR	MORE		; Continue
+SHORT:
+	LD	A, C		; Last few bytes
+	CALL	HEXDUMPROW
+DONE:
+	RET
+
+	
+	
+INTERACTIVE:
+	; TODO: Do we want this to be actually interactive?
+	; For now just dump one line and advance CURADDR
+	LD	HL, (CURADDR)
+	LD	A, HDROWL
+	CALL	HEXDUMPROW	; Dump row, HL is advanced by count
+	LD	(CURADDR), HL
+	RET
+#endlocal
+
+; Dump one row of memory, up to 'A' bytes
+HEXDUMPROW:
+#local
+	PUSH 	BC
+	PUSH	DE
+	
+	LD	E, A		; Save A
+	
+	LD	BC, HL
+	CALL	PRINTWORD	; Address (BC preserved)
+	
+	LD	HL, STR_COLONSEP
+	CALL	PRINT
+	LD	HL, BC		; Restore address
+	
+	PUSH	HL		; Save inital addr
+	; Byte values
+	LD	B, E		; Count
+BYTEL:
 	LD	A, (HL)
 	CALL	PRINTBYTE
-	LD	HL, STR_NL
-	CALL	PRINT
+	LD	A, ' '
+	CALL	PRINTCH
+	INC	HL
+	DJNZ	BYTEL
+	; Pad if short
+	LD	A, HDROWL
+	SUB	E
+	LD	B, A
+	JR	Z, NOPAD
+PADB:
+	LD	A, ' '
+	CALL	PRINTCH
+	CALL	PRINTCH
+	CALL	PRINTCH
+	DJNZ	PADB
+NOPAD:
+	
+	; Printable ASCII
+	LD	A, '|'
+	CALL	PRINTCH
+	LD	B, E
+	POP	HL		; Restart address
+ASCII:
+	LD	A, (HL)
+	INC	HL
+	CP	127
+	JR	NC, NOPRINT
+	CP	32
+	JR	NC, DOPRINT
+NOPRINT:
+	LD	A, '.'
+DOPRINT:
+	CALL	PRINTCH
+	DJNZ	ASCII
+	
+	LD	A, '|'
+	CALL	PRINTCH
+
+	CALL	PRINTNL
+	
+	POP	DE
+	POP	BC
 	RET
+
+
+#endlocal
 
 ;---------------------------------------
 ; Deposit bytes to memory
 ;	D		- Enter deposit mode at curaddr
 CMD_DEPOSIT:
+	
 	RET
 	
 ;---------------------------------------
@@ -281,8 +393,9 @@ CMD_DISASS:
 	CP	0		; No more command
 	JR	Z, DODIS	; Tail call, do one line
 	
-	CALL	HEX2BYTE
+	CALL	PARSENUM
 	JR	C, DODIS	; Any errors, just do one line
+	LD	A, C		; Only care about low byte
 	AND	A		; Test for 0
 	RET	Z		; Don't disassemble any then
 	
@@ -301,9 +414,9 @@ DODIS::
 	; Test disassemble at curaddr
 	LD	HL, (CURADDR)
 	LD	BC, HL
-	CALL	SERIAL_WRHEX16
+	CALL	PRINTWORD
 	LD	A, $09		; TAB
-	CALL	SERIAL_WRITE
+	CALL	PRINTCH
 	
 	CALL	DISINST
 	LD	BC, (CURADDR)
@@ -342,8 +455,8 @@ PADTEST:
 	
 	; Print string
 	LD	HL, DISLINE
-	CALL	SERIAL_PUTS
-	CALL	SERIAL_NL
+	CALL	PRINTN
+
 	RET
 #endlocal
 
@@ -476,6 +589,9 @@ MSDELAY		equ 255			; If CPU_FREQ unknown, be conservative
 #endif
 
 
+; 8 will fit exactly 40 characters as is, though would need newline supressed
+; 16 is 72 characters wide, fits nicely on a 80 column display
+HDROWL		equ 16			; Row length for hexdump 
 
 
 ;===============================================================================
@@ -494,6 +610,8 @@ STR_NL:
 	.ascii 10,13,0
 STR_PROMPTEND:
 	.ascii '> ',0
+STR_COLONSEP:
+	.ascii ': ',0
 
 ;===============================================================================
 ;===============================================================================
