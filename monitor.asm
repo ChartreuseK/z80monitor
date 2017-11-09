@@ -76,10 +76,10 @@ START:
 	;CALL	DISINST
 	
 	
-	LD	B, 60
+	LD	B, 51
 DLOOP:
 	PUSH	BC
-	CALL	CMD_DISASS
+	CALL	DODIS
 	POP	BC
 	DJNZ	DLOOP
 	
@@ -87,12 +87,13 @@ DLOOP:
 	LD	HL, STR_AFTDIS
 	CALL	SERIAL_PUTS
 	
+
 	
-;CMD_LOOP:
-	;CALL 	DISP_PROMPT	; Display prompt + cur addr
-	;CALL	GET_LINE	; Read in user input
-	;CALL	PARSE_LINE	; Parse line and do actions
-;	JR	CMD_LOOP
+CMD_LOOP:
+	CALL 	DISP_PROMPT	; Display prompt + cur addr
+	CALL	GET_LINE	; Read in user input
+	CALL	PARSE_LINE	; Parse line and do actions
+	JR	CMD_LOOP
 	
 	
 HALT:	
@@ -134,7 +135,6 @@ DISTEST:
 	NOP
 	DB	$FD
 	DB	$DD
-	DB	$FD
 	RETI
 	OUT	(C), A
 	IN	A, (C)
@@ -154,9 +154,6 @@ TEST:
 	JR	TEST
 	JP	PO, TEST
 	JR	NC, TEST
-	NOP
-	NOP
-	NOP
 ;---------------------------------------
 ; Get a line of user input into LBUF
 GET_LINE:
@@ -164,29 +161,35 @@ GET_LINE:
 	LD	HL, LBUF
 	LD	C, LBUFLEN
 LINEL:
-	CALL	SERIAL_READ	; Get a character
+	CALL	KBD_GETKEY	; Get a character
 	CALL	TO_UPPER	; Uppercase only
+
 	LD	B, A		; Save charaacter
+	
 	CP	$08		; BKSP
 	JR	NZ, NOBKSP
+BKSP:
 	LD	A, LBUFLEN
 	CP	C	
-	JR	Z, NOBKSP	; Don't backspace if at beginning of line
+	JR	Z, IGNORE	; Don't backspace if at beginning of line
 	DEC	HL
 	INC	C
-	LD	A, B		; Restore character
-	CALL	SERIAL_WRITE	; BKSP
+	LD	A, B		; Restore character (BKSP)
+	CALL	SERIAL_WRITE	
 	LD	A, ' '
 	CALL	SERIAL_WRITE	; Space
 	LD	A, $08		; BKSP again 
 	JR	NOSTORE
-NOBKSP:	CP	$0A		; NEWLINE
+	
+NOBKSP:	
+	CP	$0A		; NEWLINE
 	JR	Z, DONE		
-	XOR	A		; Compare with 0
+	
+	XOR	A		; Clear A
 	CP	C		; Check if we have space to store
 	JR	Z, IGNORE	; Ignore character if so
-	LD	A, B		; Restore character
 	
+	LD	A, B		; Restore character
 	LD	(HL), A		; Store into buffer
 	INC	HL
 	DEC	C
@@ -194,91 +197,54 @@ NOSTORE:
 	CALL	SERIAL_WRITE	; Echo character back
 IGNORE:
 	JR	LINEL
-DONE:
+DONE:	LD	A, $0D		; CR
+	CALL	SERIAL_WRITE
+	LD	A, $0A		; NL
+	CALL	SERIAL_WRITE
 	LD	(HL), 0		; Add trailing null terminator
 	RET
 #endlocal
 
 
-;---------------------------------------
-; Convert character in A to uppercase if lowercase
-TO_UPPER:
-#local
-	CP	'a'
-	JR	C, NOCHG	; ch < 'a'
-	CP	'z'+1		
-	
-	JR	NC, NOCHG	; ch > 'z'
-	; 'a' <= ch <= 'z'
-	SUB	$20		; 'a' - 'A' convert to uppercase
-NOCHG:
-	RET
-#endlocal
+
 
 
 ;---------------------------------------
 ; Parse line and handle commands
 PARSE_LINE:
 #local
-	LD	BC, LBUF
+	LD	HL, LBUF
 	CALL 	SKIPWHITE	; Skip leading whitespace to be nice
 	
 	LD	IX, CMDTBL	
-	LD	HL, CMDTBLJ	; Jump table
+	LD	IY, CMDTBLJ	; Jump table
 NEXTCMP:
-	LD	A, (HL)		; Check character
-	CP	(IX)		; Compare with table
+	LD	A, (IX)		; Read in table entry
+	CP	(HL)		; Compare with buffer character
 	JR	Z, MATCH
 	
-	LD	A, 0
-	CP	(IX)		; Check for end of table
+	CP	0		; Check if end of table
 	JR	Z, MATCH	; Match if end of table/invalid command
 	
 	INC	IX		; Next character
-	INC 	HL		
-	INC 	HL		; Next function
+	INC 	IY		
+	INC 	IY		; Next function
 	JR	NEXTCMP
 MATCH:
-	JP	(HL)		; Jump into table, index into string in BC
+	LD	BC, (IY)
+	PUSH	BC
+	RET		; Jump into table, index into string in BC
 #endlocal
 
-;---------------------------------------
-; Increments HL till non-whitespace in (HL)
-SKIPWHITE:
-#local
-	LD	A, (HL)
-	CALL	ISWHITE
-	JR	NZ, END
-	INC	HL
-	JR	SKIPWHITE
-END:
-	RET
-#endlocal
 
-;---------------------------------------
-; Is character in A whitespace? Sets Z if so
-ISWHITE:
-#local
-	CP	' '		; Space
-	JR	Z, END
-	CP	$09		; TAB
-	JR	Z, END
-	CP	$0B		; Vert Tab
-	JR	Z, END
-	CP	$0C		; Form Feed
-END:	
-	RET
-	
-#endlocal
 
 
 ;---------------------------------------
 ; Change current address 
 CMD_CHADDR:
-	LD	HL, BC		; Transfer index
 	INC	HL		; Skip over command
 	CALL	SKIPWHITE	; Skip any whitespace
-	;CALL	PARSEADDR	; Parse up to 2 byte address
+	CALL	HEX2WORD	; Parse up to 2 byte address
 	LD	A, C
 	LD	(CURADDR), A	;
 	LD	A, B
@@ -290,6 +256,11 @@ CMD_CHADDR:
 ;	E		- Enter interactive examine mode
 ;	E 8		- Examine 8 bytes from curaddr
 CMD_EXAMINE:
+	LD	HL, (CURADDR)
+	LD	A, (HL)
+	CALL	PRINTBYTE
+	LD	HL, STR_NL
+	CALL	PRINT
 	RET
 
 ;---------------------------------------
@@ -300,24 +271,85 @@ CMD_DEPOSIT:
 	
 ;---------------------------------------
 ; Dissassemble memory
-; 	X		- Interactive dissassemble
+; 	X		- Disassemble 1 inst (TODO:Interactive dissassemble)
 ;	X 10		- Disassemble 10 instructions from curaddr
 CMD_DISASS:
+#local
+	INC	HL		; Skip command
+	CALL	SKIPWHITE
+	LD	A, (HL)
+	CP	0		; No more command
+	JR	Z, DODIS	; Tail call, do one line
+	
+	CALL	HEX2BYTE
+	JR	C, DODIS	; Any errors, just do one line
+	AND	A		; Test for 0
+	RET	Z		; Don't disassemble any then
+	
+	LD	B, A
+DISLOOP:
+	PUSH	BC
+	CALL	DODIS
+	POP	BC
+	DJNZ	DISLOOP
+	
+	RET
+
+;--------
+; Disassemble one instruction and print result
+DODIS::
 	; Test disassemble at curaddr
 	LD	HL, (CURADDR)
 	LD	BC, HL
 	CALL	SERIAL_WRHEX16
-	LD	A, $09	; TAB
+	LD	A, $09		; TAB
 	CALL	SERIAL_WRITE
 	
 	CALL	DISINST
+	LD	BC, (CURADDR)
 	LD	(CURADDR), HL	; Next instruction
+	
+	; Determine number of bytes consumed (min 1, max 4)
+	SCF
+	CCF
+	SBC	HL, BC		; L contains number of bytes consumed
+	
+	LD	A, L		; Number of bytes
+	LD	HL, BC		; Old start addr
+	LD	B, A		; Number of bytes
+	LD	C, A		; Save copy in C
+BYTES:
+	LD	A, (HL)
+	CALL	PRINTBYTE
+	LD	A, ' '
+	CALL	PRINTCH
+	INC	HL
+	DJNZ	BYTES
+	; Pad out spaces
+	LD	A, 5		; One extra since we're doing DJNZ
+	SUB	C		; Number of remaining padding
+	LD	B, A
+	JR	PADTEST
+PAD:
+	LD	A, ' '
+	CALL	PRINTCH
+	CALL	PRINTCH
+	CALL	PRINTCH
+PADTEST:
+	DJNZ	PAD
+	LD	A, $09		; TAB
+	CALL	PRINTCH
+	
 	; Print string
 	LD	HL, DISLINE
 	CALL	SERIAL_PUTS
 	CALL	SERIAL_NL
 	RET
-	
+#endlocal
+
+
+
+
 CMD_INVAL:
 	RET
 	
@@ -343,13 +375,27 @@ CMDTBLJ:
 	DW CMD_DISASS
 	DW CMD_INVAL	; Invalid command
 
+
+; Display the prompt
+;  '$ABCD> '
+DISP_PROMPT:
+	LD	A, '$'
+	CALL	PRINTCH		
+	LD	BC, (CURADDR)
+	CALL	PRINTWORD	; Print current address
+	LD	HL, STR_PROMPTEND
+	JP	PRINT		; Tail call
+	
+
 #include "lcd.asm"	; LCD Routines
 #include "delay.asm"	; Delay/sleep routines
 #include "cf.asm"	; CF card routines
 #include "serial.asm"	; Serial routines
 #include "kbd.asm"	; Keyboard routines
 #include "int.asm"	; Interrupt routines
-#include "disass.asm"	
+#include "parse.asm"	; String parsing routines
+#include "print.asm"	; Console printing routines
+#include "disass.asm"	; Dissassembler
 
 	
 ;===============================================================================
@@ -444,6 +490,10 @@ STR_BANNER:
 
 STR_AFTDIS:
 	.ascii "---DISDONE---",10,13,0
+STR_NL:
+	.ascii 10,13,0
+STR_PROMPTEND:
+	.ascii '> ',0
 
 ;===============================================================================
 ;===============================================================================

@@ -13,7 +13,7 @@ KBD_GETSCAN:
 	LD	A, 0		; Row offset in decode table
 LOOP:
 	LD	C, PORT_KBD
-	IN	C, (C)			
+	IN	C, (C)		; Read from port BC, B used for scanning key rows
 	JR	NZ, FND		; Found a keypress
 	ADD	A, 8		; Next row
 	SLA	B		; Shift to next row
@@ -65,8 +65,8 @@ NOSHIFTR:
 ; Convert scancode to ASCII(ish)
 SCAN2KEY:
 #local
-	PUSH	AF			; Save A
-	BIT	6, B			; Test Shift
+	;PUSH	AF			; Save A
+	BIT	6, A			; Test Shift
 	JR	Z, NOSHIFT
 	LD	HL, KBD_DECODE_SHIFT	; Shifted keys don't quite correspond
 	JR	DECODE			; to ASCII shifts so can't just mask $20
@@ -78,6 +78,11 @@ DECODE:
 	LD	B, 0
 	LD	HL, KBD_DECODE		; Load the decode table address
 	ADD	HL, BC			; Offset into table
+	LD	A, (HL)
+	RET
+	
+	
+	
 	POP	AF			; Restore A
 	LD	B, A			; Save scancode (so we can test ctrl)
 	LD	A, (HL)			; Read in the value from table
@@ -92,6 +97,10 @@ NOCTRL:
 ;---------------------------------------
 ; Waits for a key to be pressed, and returns the ASCII value
 KBD_GETKEY:
+#local
+	PUSH	BC
+	PUSH	HL
+LOOP:
 	CALL	KBD_GETSCAN
 	
 	LD	BC, 20			; Give some delay for debounce
@@ -99,16 +108,18 @@ KBD_GETKEY:
 	
 	LD	HL, LAST_SCAN		
 	CP	(HL)			; Compare with last scancode
-	JR	Z, KBD_GETKEY		; If same as last key ignore
+	JR	Z, LOOP		; If same as last key ignore
 	
 	LD	(HL), A			; Save as new last key (even if blank)
 	
 	AND	A			; Retest scancode
-	JR	Z, KBD_GETKEY		; Wait for a keypress
+	JR	Z, LOOP		; Wait for a keypress
 	
 	CALL	SCAN2KEY		; Convert scancode to ASCII
+	POP	HL
+	POP	BC
 	RET
-	
+#endlocal
 	
 	
 	
