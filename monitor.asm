@@ -71,21 +71,6 @@ START:
 	CALL	SERIAL_PUTS
 	
 	
-	LD	HL, HALT
-	LD	(CURADDR), HL
-	;CALL	DISINST
-	
-	
-	LD	B, 51
-DLOOP:
-	PUSH	BC
-	CALL	DODIS
-	POP	BC
-	DJNZ	DLOOP
-	
-	
-	LD	HL, STR_AFTDIS
-	CALL	SERIAL_PUTS
 	
 
 	
@@ -158,6 +143,7 @@ TEST:
 ; Get a line of user input into LBUF
 GET_LINE:
 #local
+	PUSH	BC
 	LD	HL, LBUF
 	LD	C, LBUFLEN
 LINEL:
@@ -202,6 +188,7 @@ DONE:	LD	A, $0D		; CR
 	LD	A, $0A		; NL
 	CALL	SERIAL_WRITE
 	LD	(HL), 0		; Add trailing null terminator
+	POP	BC
 	RET
 #endlocal
 
@@ -306,6 +293,7 @@ INTERACTIVE:
 	RET
 #endlocal
 
+;--------
 ; Dump one row of memory, up to 'A' bytes
 HEXDUMPROW:
 #local
@@ -378,8 +366,42 @@ DOPRINT:
 ; Deposit bytes to memory
 ;	D		- Enter deposit mode at curaddr
 CMD_DEPOSIT:
+#local	
+NEXTLINE:
+	LD	HL, (CURADDR)
+	LD	BC, HL
+	CALL	PRINTWORD
+	LD	HL, STR_COLONSEP
+	CALL	PRINT
+
+
+	CALL	GET_LINE	; Read in new line from user
+	LD	HL, LBUF
+	CALL	SKIPWHITE	; Skip any whitespace
+	LD	A, (HL)	
+	AND	A
+	JR	Z, EXIT		; Exit on a blank line
+LLOOP:
+	; Otherwise start reading hex values and depositing
+	CALL	HEX2BYTE
+	JR	C, EXIT		; Stop on first bad byte
 	
+	LD	BC, HL
+	LD	HL, (CURADDR)
+	LD	(HL), A		; Store byte
+	INC	HL
+	LD	(CURADDR), HL
+	LD	HL, BC
+	
+	CALL	SKIPWHITE
+	LD	A, (HL)
+	AND 	A
+	JR	NZ, LLOOP
+	JR	NEXTLINE	; Otherwise read another line in
+EXIT:
 	RET
+#endlocal
+	
 	
 ;---------------------------------------
 ; Dissassemble memory
@@ -470,8 +492,26 @@ CMD_INVAL:
 ; Jump to code in memory
 ;	R		- Call curaddr
 ; 	R 1E00		- Call $1E00
+; 	
+; Never returns, if code that's run returns, perform a restart
 CMD_RUN:
+#local
+	INC	HL
+	CALL	SKIPWHITE
+	CALL	PARSENUM	; Check if we got a number
+	JR	C, CUR		; If no number, run at current addr
+	LD	HL, START	; Do a cold start if run returns
+	PUSH	HL		; Return address
+	PUSH	BC		; Address to jump to
+	RET			; Jump to code
+CUR:
+	LD	HL, START	; Do a cold start if run returns
+	PUSH	HL		; Return address
+	LD	HL, (CURADDR)
+	PUSH	HL		; Address to jump to
 	RET
+#endlocal
+
 
 CMDTBL:
 	DB '.'	; Change address
