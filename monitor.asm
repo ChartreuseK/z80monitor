@@ -26,7 +26,7 @@ RESET:
 	JP	START
 	ORG	0x30		; RST $30
 	JP	START
-	ORG	0x38		; RST $38
+	ORG	0x38		; RST $38 / Int vector
 	JP	INT
 
 

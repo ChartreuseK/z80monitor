@@ -66,8 +66,7 @@ X2:	; ALU[y], r[z] ALU + register
 	CALL	EXTRACT_Y
 	LD	BC, ALU
 	CALL	PUSHINDEXED
-	LD	A, OSEP
-	CALL	PUSHCH
+	; Seperator is part of the string, since some need OSEP and some space
 	LD	A, (HL)
 	CALL	EXTRACT_Z
 	LD	BC, REG8
@@ -806,8 +805,7 @@ ALUIMM:
 	CALL	EXTRACT_Y
 	LD	BC, ALU
 	CALL	PUSHINDEXED
-	LD	A, OSEP
-	CALL	PUSHCH
+	; Seperator part of ALU string
 	JP	IMM8
 	
 ;--------
@@ -1329,14 +1327,14 @@ CC:
 	DM "P"+$80
 	DM "M"+$80
 ALU:
-	DM "ADD",OSEP,"A,"+$80
-	DM "ADC",OSEP,"A,"+$80
-	DM "SUB"+$80
-	DM "SBC",OSEP,"A,"+$80
-	DM "AND"+$80
-	DM "XOR"+$80
-	DM "OR"+$80
-	DM "CP"+$80
+	DM "ADD",OSEP,"A, "+$80
+	DM "ADC",OSEP,"A, "+$80
+	DM "SUB",OSEP+$80
+	DM "SBC",OSEP,"A, "+$80
+	DM "AND",OSEP+$80
+	DM "XOR",OSEP+$80
+	DM "OR",OSEP+$80
+	DM "CP",OSEP+$80
 ROT:
 	DM "RLC",OSEP+$80
 	DM "RRC",OSEP+$80
