@@ -36,28 +36,84 @@ BIT:
 ; J is connected to IP2 on the 68681
 ; TODO: Optimize, this is way too big...
 	XOR	A			; Modifiers
-	LD	BC, 0x02000 | SER_IPR	; Scan for 1 (Ctrl) while reading in IP
-	IN	C, (C)		;
-	BIT	2, C			; Test IP2
-	JR	Z, NOCTRL
-	OR	0x80			; High bit for CTRL
-NOCTRL:
-	LD	BC, 0x01000 | SER_IPR	; Scan for 0 (Left shift) while reading in IP
-	IN	C, (C)			;
-	BIT	2, C			; Test IP2
-	JR	Z, NOSHIFTL
-	OR	0x40			; Bit for Shift
-NOSHIFTL:
-	LD	BC, 0x20000 | SER_IPR	; Scan for 5 (Right shift) while reading in IP
-	IN	C, (C)		;
-	BIT	2, C			; Test IP2
+	
+	LD	B, 0x02			; Scan Shift R
+	CALL	SCANMOD
 	JR	Z, NOSHIFTR
-	OR	0x40			; Bit for Shift
+	OR	$40			; Shift mask
 NOSHIFTR:
-	LD	B, A			; Save mask in B
+	LD	B, 0x20			; Scan Shift L
+	CALL	SCANMOD
+	JR	Z, NOSHIFT
+	OR	$40
+NOSHIFT:
+	LD	B, 0x01			; Scan ctrl
+	CALL	SCANMOD
+	JR	Z, NOCTRL
+	OR	$80
+NOCTRL:
+	
+	LD	B, A
 	POP	AF
-	OR	B			; Set mask: cs rrr bbb
+	OR	B
 	RET
+
+; Scans modifier key 
+; (68681 seems quite slow/inconsitant at detecting changes, our workaround
+;  for now is to spam the scan a ton of times. Seems to work consistently.
+;  We use IN opcodes from the 68681 since they're slightly longer than memory
+;  reads due to the WAIT state circuitry for /DTACK) 
+; Ideally we should add another buffer to read the state without the 68681
+; or see if we can get the plain unbuffered input port on the 68681 to work
+;
+; UGLY UGLY HACK, Figure out a hardware fix....
+; 
+; Sets Z corresponding to the scanned bit
+; Row/Rows to scan in B
+
+SCANMOD:
+#local
+	PUSH	DE
+	PUSH	BC
+	LD	E, A
+	LD	BC, 0x0000 | SER_IPCR
+	IN	C, (C)			; Reset IPCR to start
+	POP	BC
+	
+	LD	C, SER_SRA	; Use SRA so we don't affect the ports
+	XOR	A			; Loop 256 times
+SCANLOOP:
+	IN	D, (C)			; Scan the row
+	IN	D, (C)			; Scan the row
+	IN	D, (C)			; Scan the row
+	IN	D, (C)			; Scan the row
+	IN	D, (C)			; Scan the row
+	IN	D, (C)			; Scan the row
+	IN	D, (C)			; Scan the row
+	IN	D, (C)			; Scan the row
+	
+	IN	D, (C)			; Scan the row
+	IN	D, (C)			; Scan the row
+	IN	D, (C)			; Scan the row
+	IN	D, (C)			; Scan the row
+	
+	IN	D, (C)			; Scan the row
+	IN	D, (C)			; Scan the row
+	IN	D, (C)			; Scan the row
+	IN	D, (C)			; Scan the row
+	SUB	1
+	JR	NZ, SCANLOOP
+	
+	LD	BC, 0x0000 | SER_IPCR	; Scan in change register
+	IN	C, (C)			; Re-read IPCR
+	BIT	6, C			; Check IP2 change
+	LD	A, E
+	POP	DE
+	RET
+#endlocal
+
+
+
 #endlocal
 
 
@@ -76,7 +132,6 @@ DECODE:
 	AND	0x3F			; Mask off ctrl and shift bits
 	LD	C, A			; Scancode as the offset
 	LD	B, 0
-	LD	HL, KBD_DECODE		; Load the decode table address
 	ADD	HL, BC			; Offset into table
 	LD	A, (HL)
 	RET

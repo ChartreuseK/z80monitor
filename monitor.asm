@@ -70,10 +70,6 @@ START:
 	LD	HL, STR_BANNER
 	CALL	SERIAL_PUTS
 	
-	
-	
-
-	
 CMD_LOOP:
 	CALL 	DISP_PROMPT	; Display prompt + cur addr
 	CALL	GET_LINE	; Read in user input
@@ -594,7 +590,8 @@ SER_CSRA 	equ DUART+1     ; Clock Select Register A   (W)
 SER_CRA 	equ DUART+2     ; Commands Register A       (W)
 SER_RBA 	equ DUART+3     ; Receiver Buffer A         (R)
 SER_TBA 	equ DUART+3     ; Transmitter Buffer A      (W)
-SER_ACR 	equ DUART+4     ; Aux. Control Register     (R/W)
+SER_ACR 	equ DUART+4     ; Aux. Control Register     (W)
+SER_IPCR 	equ DUART+4     ; Input Port Change Register(R)
 SER_ISR 	equ DUART+5     ; Interrupt Status Register (R)
 SER_IMR 	equ DUART+5     ; Interrupt Mask Register   (W)
 SER_CTU		equ DUART+6	; Counter/Timer Upper Val 	(R/W)
