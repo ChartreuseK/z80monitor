@@ -819,6 +819,7 @@ RESTART:
 	ADD	A		; Y*2
 	ADD	A		; Y*4
 	ADD	A		; Y*8
+	LD	B, A
 	CALL	PUSHHEX8
 	JP	DONE
 ;---------------------------------------
