@@ -48,6 +48,10 @@ START:
 
 	LD	SP, 0xFFFF	; Set stack to top of RAM
 	
+	; Init 8255
+	LD	A, 0xC3		; Mode 2 on Port A (and ctrl on port C), othersper input
+	OUT	(PIO_CTRL), A
+	
 	; Clear RAM (0x8000-0xFFFF) before we use the stack
 ;	LD	HL, 0x8000
 ;	LD	B, 0
@@ -509,12 +513,104 @@ CUR:
 #endlocal
 
 
+CMD_TIME:
+#local	
+	LD	BC, 0x0013	; Day BCD
+	CALL	TEENSY_READ
+	LD	B, A
+	CALL	PRINTBYTE
+	LD	A, '/'
+	CALL	PRINTCH
+	
+	LD	BC, 0x0014	; Month BCD
+	CALL	TEENSY_READ
+	LD	B, A
+	CALL	PRINTBYTE
+	LD	A, '/'
+	CALL	PRINTCH
+	
+	LD	BC, 0x0015	; Year BCD
+	CALL	TEENSY_READ
+	LD	B, A
+	CALL	PRINTBYTE
+	LD	A, ' '
+	CALL	PRINTCH
+	
+	LD	BC, 0x0012	; Read hours (BCD) from RTC 
+	CALL	TEENSY_READ
+	LD	B, A
+	CALL	PRINTBYTE
+	LD	A, ':'
+	CALL	PRINTCH
+	
+	LD	BC, 0x0011	; Read minutes (BCD) from RTC
+	CALL	TEENSY_READ
+	LD	B, A
+	CALL	PRINTBYTE
+	LD	A, ':'
+	CALL	PRINTCH
+	
+	LD	BC, 0x0010	; Read seconds (BCD) from RTC
+	CALL	TEENSY_READ
+	LD	B, A
+	CALL	PRINTBYTE
+	
+	CALL	PRINTNL
+	
+	RET
+#endlocal
+
+
+; Send a device and address to the Teensy
+; B - device
+; C - addr
+TEENSY_REQ:
+#local
+WAITSEND:
+	IN	A, (PIO_C)	; Read in status
+	BIT	7, A		; Check if output buffer already full...
+	JR	Z, WAITSEND
+	
+	LD	A, B		; Device
+	OUT	(PIO_A), A	; Store into output buffer
+	
+WAITSEND2:
+	IN	A, (PIO_C)	; Read in status
+	BIT	7, A		; Check if output buffer already full...
+	JR	Z, WAITSEND2
+	
+	LD	A, C		; Address
+	OUT	(PIO_A), A	; Store into output buffer
+	RET
+#endlocal
+
+
+
+
+; Read a byte from device & addr from the Teensy
+; B - device
+; C - addr
+; Returns:
+; A - byte val
+TEENSY_READ:
+#local
+	CALL	TEENSY_REQ
+WAITREAD:
+	IN	A, (PIO_C)	; Check status
+	BIT	5, A		; Check if input buffer full
+	JR	Z, WAITREAD
+	
+	IN	A, (PIO_A)
+	RET
+#endlocal
+
 CMDTBL:
 	DB '.'	; Change address
 	DB 'E'	; Examine
 	DB 'D'	; Deposit
 	DB 'R'	; Run
 	DB 'X'	; Disassemble
+	DB 'T'	; Time
 	DB 0	; End of table/invalid command
 CMDTBLJ:
 	DW CMD_CHADDR
@@ -522,6 +618,7 @@ CMDTBLJ:
 	DW CMD_DEPOSIT
 	DW CMD_RUN
 	DW CMD_DISASS
+	DW CMD_TIME
 	DW CMD_INVAL	; Invalid command
 
 
