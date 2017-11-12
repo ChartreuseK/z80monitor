@@ -66,6 +66,7 @@ START:
 	LD	HL, STR_LCDBANNER
 	CALL	LCDPUTS
 	NOP	; Required before CF_INIT otherwise will fail! (Why?!)
+	NOP
 	CALL	CF_INIT
 	CALL	SERIAL_INIT
 	LD	A, 0
@@ -74,6 +75,35 @@ START:
 	LD	HL, STR_BANNER
 	CALL	SERIAL_PUTS
 	
+	CALL	CF_DETECT
+	JR	NZ, DRVPRES
+	LD	HL, STR_NODRIVE
+	CALL	PRINTN
+	JR	CMD_LOOP
+DRVPRES:
+	LD	HL, STR_DRIVE
+	CALL	PRINTN
+	
+	CALL	FAT_INIT
+	
+	LD	HL, STR_VOLLBL
+	LD	A, '"'
+	CALL	PRINTCH
+	LD	HL, FAT_VOLLBL
+	CALL	PRINT
+	LD	A, '"'
+	CALL	PRINTCH
+	LD	A, ' '
+	CALL	PRINTCH
+	LD	HL, STR_VOLID
+	CALL	PRINT
+	LD	BC, (FAT_VOLID+2)
+	CALL	PRINTWORD
+	LD	A, '-'
+	CALL	PRINTCH
+	LD	BC, (FAT_VOLID)
+	CALL	PRINTWORD
+	CALL	PRINTNL
 CMD_LOOP:
 	CALL 	DISP_PROMPT	; Display prompt + cur addr
 	CALL	GET_LINE	; Read in user input
@@ -560,6 +590,10 @@ CMD_TIME:
 	RET
 #endlocal
 
+CMD_LIST:
+	CALL	FAT_DIR_ROOT
+	RET
+
 
 ; Send a device and address to the Teensy
 ; B - device
@@ -611,6 +645,7 @@ CMDTBL:
 	DB 'R'	; Run
 	DB 'X'	; Disassemble
 	DB 'T'	; Time
+	DB 'L'	; List root directory
 	DB 0	; End of table/invalid command
 CMDTBLJ:
 	DW CMD_CHADDR
@@ -619,6 +654,7 @@ CMDTBLJ:
 	DW CMD_RUN
 	DW CMD_DISASS
 	DW CMD_TIME
+	DW CMD_LIST
 	DW CMD_INVAL	; Invalid command
 
 
@@ -642,7 +678,7 @@ DISP_PROMPT:
 #include "parse.asm"	; String parsing routines
 #include "print.asm"	; Console printing routines
 #include "disass.asm"	; Dissassembler
-
+#include "fatfs.asm"	; FAT filesystem
 	
 ;===============================================================================
 ;===============================================================================
@@ -738,21 +774,27 @@ STR_BANNER:
 	.ascii "Chartreuse Z80 Monitor v0.1",10,13
 	.ascii "========================================",10,13,0
 
-STR_AFTDIS:
-	.ascii "---DISDONE---",10,13,0
 STR_NL:
 	.ascii 10,13,0
 STR_PROMPTEND:
 	.ascii '> ',0
 STR_COLONSEP:
 	.ascii ': ',0
+	
+STR_NODRIVE:
+	.ascii "No IDE drive detected",0
+STR_DRIVE:
+	.ascii "IDE drive detected",0
+STR_VOLLBL:
+	.ascii "Volume Label: ",0
+STR_VOLID:
+	.ascii "Volume ID: ",0
 
 ;===============================================================================
 ;===============================================================================
 ; Uninitialized Data in RAM
 #data _RAM
 
-LBA:		DS 4	; 4-byte (28-bit) little-endian LBA address for CF
 
 
 LBUFLEN		equ 80

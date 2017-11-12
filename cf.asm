@@ -1,5 +1,17 @@
+
+#data _RAM
+
+LBA:		DS 4	; 4-byte (28-bit) little-endian LBA address for CF
+SECTOR:		DS 512 	; Sector buffer
+
+
+#code _ROM
+
+
 ;---------------------------------------
 ; Init CF card
+;  Will work even if a card is not present, since LBUSY will get a zero
+;  from the pulldowns and return
 CF_INIT::
 	CALL	CF_LBUSY
 	LD	A, 0x01		; 8-bit mode
@@ -12,6 +24,16 @@ CF_INIT::
 	OUT	(CF_COUNT), A
 	RET
 ;---------------------------------------
+
+
+;---------------------------------------
+; Detect if a CF card is actually present
+; NZ if drive present
+CF_DETECT:
+	IN	A, (CF_CMD_STAT) ; If all bits of the status register are 0
+	AND	A		; Then there is likely no device present
+	RET
+
 	
 	
 ;---------------------------------------	
@@ -49,7 +71,7 @@ CF_LDATARDY:
 ;---------------------------------------
 ; Reads one 512-byte sector to RAM
 ; HL - Address to start storing to
-; Var LBA: - 24 bit LBA address to read from
+; Var LBA: - 28 bit LBA address to read from
 CF_READ::
 #local
 	CALL	CF_LBUSY	; Load LBA address to access
