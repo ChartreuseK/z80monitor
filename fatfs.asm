@@ -110,6 +110,9 @@ SFNF_ADD:
 	RET
 #endlocal
 
+
+;--------
+; Increment 28-bit LBA value
 INC_LBA:
 	LD	A, (LBA+0)
 	ADD	1
@@ -127,26 +130,23 @@ INC_LBA:
 	
 
 
-STR_ROOTLIST:
-	.ascii "Starting root dir listing...",10,13,0
 ;--------
 ; Do a root directory listing
 FAT_DIR_ROOT:
 #local
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	PUSH	IX
 	; Start at the first block of the ROOT dir
 	LD	A, (FAT_ROOTLBA+0)
 	LD	(LBA+0), A
-	CALL	PRINTBYTE
 	LD	A, (FAT_ROOTLBA+1)
 	LD	(LBA+1), A
-	CALL	PRINTBYTE
 	LD	A, (FAT_ROOTLBA+2)
 	LD	(LBA+2), A
-	CALL	PRINTBYTE
 	LD	A, (FAT_ROOTLBA+3)
 	LD	(LBA+3), A
-	CALL	PRINTBYTE
-	CALL	PRINTNL
 	
 	LD	HL, STR_ROOTLIST
 	CALL	PRINTN
@@ -162,6 +162,46 @@ FAT_DIR_ROOT:
 	
 	
 DOENT:
+	CALL	PRINTENT
+	
+	; Advance to the next entry
+	DEC	E			; Check how many dirents are left
+	JR	Z, DONE			; If none then we're done
+	; Otherwise move to next entry
+	LD	BC, 32			; 32 bytes per entry
+	ADD	IX, BC
+	; Check if we need to load the next block
+	; We need to compare IX to SECTOR+512
+	LD	BC, IX			; Transfer IX to HL so we can do
+	LD	HL, BC			; a 16-bit compare
+	LD	BC, SECTOR+512		; End address
+	SBC	HL, BC
+	ADD	HL, BC
+	JR	C, NOLOAD		; If IX < SECTOR+512 then no need to load
+	; Load a new block
+	CALL	INC_LBA			; Next sequential block
+	LD	HL, SECTOR
+	CALL	CF_READ			; Read in block
+	LD	IX, SECTOR		; Reset index
+NOLOAD:
+	JR	DOENT
+DONE:
+	POP	IX
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+	
+#endlocal
+
+
+;--------
+; Print a directory entry
+;  IX - Points to entry
+;
+; Corrupts A, BC, HL
+PRINTENT:
+#local
 	LD	A, (IX+11)		; First read attributes byte
 	LD	B, A			; Save attribute byte
 	AND	A
@@ -215,8 +255,8 @@ PRNAME:
 	CALL	PRINTCH
 	DJNZ	PRNAME
 	
-	LD	A, '.'
-	CALL	PRINTCH
+	LD	A, ' '			; Filename/Ext sepeator 
+	CALL	PRINTCH			; (space for fixed-width listing)
 	LD	B, 3			; Extension length
 PREXT:
 	LD	A, (HL)
@@ -245,37 +285,11 @@ PREXT:
 	LD	C, (IX+26)		
 	CALL	PRINTWORD
 	
-	CALL	PRINTNL
-	
-	; Advance to the next entry
+	CALL	PRINTNL			; Tail call
 SKIPENT:
-	DEC	E			; Check how many dirents are left
-	JR	Z, DONE			; If none then we're done
-	; Otherwise move to next entry
-	LD	BC, 32			; 32 bytes per entry
-	ADD	IX, BC
-	; Check if we need to load the next block
-	; We need to compare IX to SECTOR+512
-	;JP	NOLOAD
-	
-	LD	BC, IX
-	LD	HL, BC
-	LD	BC, SECTOR+512
-	SBC	HL, BC
-	ADD	HL, BC
-	JR	C, NOLOAD
-	; Load a new block
-	CALL	INC_LBA			; Next sequential block
-	LD	HL, SECTOR
-	CALL	CF_READ			; Read in block
-	LD	IX, SECTOR		; Reset index
-NOLOAD:
-	JP	DOENT
-DONE:
-	
 	RET
-	
 #endlocal
+
 
 
 ;--------
@@ -292,3 +306,11 @@ CLR_ATTRSTR:
 	LD	(ATTR_STR+6), A
 	RET
 	
+
+
+
+;===============================================================================
+; Static Data
+STR_ROOTLIST:
+	.ascii "Root dir listing:",10,13
+	.ascii "-------------------",0
