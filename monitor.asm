@@ -49,9 +49,13 @@ START:
 	LD	SP, 0xFFFF	; Set stack to top of RAM
 	
 	; Init 8255
-	LD	A, 0xC3		; Mode 2 on Port A (and ctrl on port C), othersper input
+	LD	A, 0xC1		; Mode 2 on Port A (and ctrl on port C), C (low) input
+				; Port B mode 0 output
 	OUT	(PIO_CTRL), A
 	
+	LD	A, 0
+	OUT	(PIO_B),A	; Clear port B
+
 	; Clear RAM (0x8000-0xFFFF) before we use the stack
 ;	LD	HL, 0x8000
 ;	LD	B, 0
@@ -72,8 +76,27 @@ START:
 	LD	A, 0
 	CALL	SERIAL_WRITE	; Write a null to clear out the buffer
 	
+	CALL	DISP_INIT
+	
+	LD	A, 0x81		; 80 col graphics
+	CALL	DISP_LMODE
+	
+	LD	B, 80*3		; 3 lines of graphic data
+	LD	HL, STR_GRAPHIC_BANNER
+GRAPHBNR:
+	LD	A,(HL)
+	CALL	DISP_WRITE_ESC
+	INC	HL
+	DJNZ	GRAPHBNR
+	
+	LD	A, 0x03		; 80 col bold
+	CALL	DISP_LMODE
+	
+	
+	
+	
 	LD	HL, STR_BANNER
-	CALL	SERIAL_PUTS
+	CALL	PRINT
 	
 	CALL	CF_DETECT
 	JR	NZ, DRVPRES
@@ -191,9 +214,9 @@ BKSP:
 	DEC	HL
 	INC	C
 	LD	A, B		; Restore character (BKSP)
-	CALL	SERIAL_WRITE	
+	CALL	PRINTCH	
 	LD	A, ' '
-	CALL	SERIAL_WRITE	; Space
+	CALL	PRINTCH	; Space
 	LD	A, $08		; BKSP again 
 	JR	NOSTORE
 	
@@ -210,13 +233,13 @@ NOBKSP:
 	INC	HL
 	DEC	C
 NOSTORE:
-	CALL	SERIAL_WRITE	; Echo character back
+	CALL	PRINTCH	; Echo character back
 IGNORE:
 	JR	LINEL
 DONE:	LD	A, $0D		; CR
-	CALL	SERIAL_WRITE
+	CALL	PRINTCH
 	LD	A, $0A		; NL
-	CALL	SERIAL_WRITE
+	CALL	PRINTCH
 	LD	(HL), 0		; Add trailing null terminator
 	POP	BC
 	RET
@@ -679,7 +702,7 @@ DISP_PROMPT:
 #include "print.asm"	; Console printing routines
 #include "disass.asm"	; Dissassembler
 #include "fatfs.asm"	; FAT filesystem
-	
+#include "display.asm"	; AVR NTSC display routines
 ;===============================================================================
 ;===============================================================================
 ; Constants
@@ -790,6 +813,23 @@ STR_VOLLBL:
 STR_VOLID:
 	.ascii "Volume ID: ",0
 
+; 3 lines of 80 columns (240b) of graphics mode data
+STR_GRAPHIC_BANNER:
+	DB $00,$00,$00,$00,$00,$00,$00,$00,$fa,$e4,$40,$00,$00,$00,$00,$00 
+	DB $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00 
+	DB $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00 
+	DB $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00 
+	DB $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00 
+	DB $80,$10,$e0,$84,$78,$04,$e0,$fe,$ff,$55,$00,$00,$a0,$0c,$10,$54 
+	DB $a8,$a0,$0c,$50,$58,$a4,$08,$5c,$a0,$0c,$50,$58,$0c,$a8,$00,$54 
+	DB $58,$0c,$a0,$0c,$04,$00,$08,$8c,$14,$98,$64,$a0,$0c,$50,$22,$66 
+	DB $66,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00 
+	DB $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00 
+	DB $02,$2d,$9b,$f6,$e4,$be,$ff,$c7,$40,$2b,$d0,$00,$0a,$30,$04,$17 
+	DB $2b,$2a,$03,$15,$17,$25,$00,$15,$2a,$0b,$10,$27,$31,$0a,$30,$05 
+	DB $32,$19,$0a,$33,$10,$00,$28,$31,$10,$25,$1a,$0a,$30,$05,$22,$26 
+	DB $26,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00 
+	DB $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
 ;===============================================================================
 ;===============================================================================
 ; Uninitialized Data in RAM

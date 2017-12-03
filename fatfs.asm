@@ -1,5 +1,7 @@
-; Implementation of the FAT filesystem
+; Implementation of the FAT16 filesystem
 ;
+
+#local
 
 #data _RAM
 ; All values are little endian
@@ -18,8 +20,8 @@ FAT_HIDSECT	DS	4	; Number of hidden sectors
 FAT_LGTSECT	DS	4	; Large total sectors (If TSECT=0)
 BPB_SIZ		EQU	. - FAT_SECTSIZ
 
-FAT_VOLID	DS	4
-FAT_VOLLBL	DS	11	; One extra byte for null termination
+FAT_VOLID::	DS	4
+FAT_VOLLBL::	DS	11	; One extra byte for null termination
 FAT_VOLLNL_NULL	DS	1
 VOL_SIZ		EQU	4+11	
 
@@ -28,13 +30,15 @@ FAT_FATLBA	DS	4	; LBA of the first FAT
 
 ATTR_STR	DS	7	; 6 + null
 
+
+FAT_TYPE	DS	1	; Detected Fat type - 12, 16, 32 (or 64 for ExFAT)
 #code _ROM
 
 
 SECTSIZ_O	EQU	11	; Offset from start of sector
 VOLID_O		EQU	39	; 39 for FAT12/16, 67 for FAT32
 
-FAT_INIT:
+FAT_INIT::
 #local
 	XOR	A
 	LD	(LBA+0), A
@@ -49,13 +53,7 @@ FAT_INIT:
 	LD	BC, BPB_SIZ
 	LDIR			; Copy relevant BPB into variables
 	
-	LD	HL, SECTOR+VOLID_O
-	LD	DE, FAT_VOLID
-	LD	BC, VOL_SIZ
-	LDIR			; Copy volume ID and name
 	XOR	A
-	LD	(DE), A	; Null terminate volume ID string
-	
 	; Calculate first FAT LBA
 	LD	(FAT_FATLBA+3), A	; FAT is within the first 64k sectors
 	LD	(FAT_ROOTLBA+3), A	; (Start of ROOT DIR LBA calc)
@@ -72,9 +70,7 @@ FAT_INIT:
 	; Root directory starts after all copies of the FAT
 	; FAT_ROOTLBA = ( FAT_FATLBA + (FAT_SECTFAT) * FAT_NFATS) )
 	; We need calculate and add SECTORS_PER_FAT * NUM_FATS to ROOTLBA
-	LD	HL, (FAT_SECTFAT)
-	;ADD	HL, HL
-	
+	LD	HL, (FAT_SECTFAT)	
 	
 	LD	DE, HL			; Save a copy of SECTFAT
 	LD	A, (FAT_NFATS)
@@ -105,6 +101,17 @@ SFNF_ADD:
 	; FAT_ROOTLBA = ( FAT_FATLBA + (FAT_SECTFAT) * FAT_NFATS) )
 	
 	
+	; Copy volume ID and name
+	LD	HL, SECTOR+VOLID_O
+	LD	DE, FAT_VOLID
+	LD	BC, VOL_SIZ
+	LDIR			; Copy volume ID and name
+	XOR	A
+	LD	(DE), A	; Null terminate volume ID string
+	
+	
+	; Determine if we're FAT12,16,32,or ExFAT
+	CALL	CALCVER
 	
 	
 	RET
@@ -132,7 +139,7 @@ INC_LBA:
 
 ;--------
 ; Do a root directory listing
-FAT_DIR_ROOT:
+FAT_DIR_ROOT::
 #local
 	PUSH	BC
 	PUSH	DE
@@ -307,10 +314,27 @@ CLR_ATTRSTR:
 	RET
 	
 
+;--------
+; Determine the FAT version
+; Calculate the total number of clusters for the partition
+;  TCLUS = NDATASEC / SECPERCLUS
+;  NDATASEC = TSECT - (RESVSECT + NFATS*SECTFAT + ROOTDIRSECT)
+;  NDATASEC = TSECT - (FAT_ROOTLBA + ROOTDIRSECT)
+;
+; If NDATASEC < 4085      -- FAT12
+;    NDATASEC < 65525     -- FAT16
+;    NDATASEC < 268435445 -- FAT32
+; Otherwise               -- ExFAT/FAT64
+;
+CALCVER:
 
+	RET
 
 ;===============================================================================
 ; Static Data
 STR_ROOTLIST:
 	.ascii "Root dir listing:",10,13
 	.ascii "-------------------",0
+
+
+#endlocal

@@ -44,13 +44,23 @@ NOADJ:
 ; Print a character to console
 ; A - ch
 PRINTCH:
-	JP	SERIAL_WRITE	; Tail call
+	JP	DISP_WRITE	; Tail Call
+	;JP	SERIAL_WRITE	; Tail call
 
 ;--------
 ; Print a null terminated string to console
 ; HL - string
 PRINT:
-	JP	SERIAL_PUTS	; Tail call
+#local
+	LD	A,(HL)
+	AND	0xFF				
+	JR	Z, END		; End if we hit null terminator
+	CALL	PRINTCH	; Write char
+	INC	HL
+	JR	PRINT		; Loop till we hit null
+END:
+	RET
+#endlocal
 
 
 PRINTN:
