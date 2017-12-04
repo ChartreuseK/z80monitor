@@ -614,7 +614,7 @@ CMD_TIME:
 #endlocal
 
 CMD_LIST:
-	CALL	FAT_DIR_ROOT
+	;CALL	FAT_DIR_ROOT
 	RET
 
 
@@ -701,7 +701,8 @@ DISP_PROMPT:
 #include "parse.asm"	; String parsing routines
 #include "print.asm"	; Console printing routines
 #include "disass.asm"	; Dissassembler
-#include "fatfs.asm"	; FAT filesystem
+;#include "fatfs.asm"	; FAT filesystem
+#include "fatv2.asm"
 #include "display.asm"	; AVR NTSC display routines
 ;===============================================================================
 ;===============================================================================

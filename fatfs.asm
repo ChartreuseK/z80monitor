@@ -327,9 +327,21 @@ CLR_ATTRSTR:
 ; Otherwise               -- ExFAT/FAT64
 ;
 CALCVER:
-
+#local
+	; If Rootdir ents is 0 then FAT32+
+	LD	A, (FAT_DIRENTS)
+	;LD	B, (FAT_DIRENTS+1)
+	OR	A, B
+	JR	NZ, NOT32
+	; Assume FAT32, we'll ignore exFAT as a possibility
+	LD	A, 32
+	LD	(FAT_TYPE), A
 	RET
-
+NOT32:
+	; Determine if FAT12 or FAT16
+	
+	RET
+#endlocal
 ;===============================================================================
 ; Static Data
 STR_ROOTLIST:
