@@ -2,6 +2,13 @@
 
 #data _RAM
 ; Parameters
+FAT_FILENAME	DS	11	; Current open file with extension
+FAT_FILELEN	DS	4	; Open file length
+FAT_FILECLUS	DS	4	; Starting cluster of file
+
+FAT_CURADDR	DS	2
+FAT_BANK	DS	1	; Bank to load into for READ_BANK
+
 FAT_CLUSTER	DS	4	; Custer to index (Little endian, 12, 16 or 32-bit)
 FAT_CURSECT	DS	1	; Current sector within cluster
 FAT_CLUSTLBA 	DS	4	; LBA of current cluster sector
@@ -11,15 +18,17 @@ FAT_CLUSTLBA 	DS	4	; LBA of current cluster sector
 FAT_TYPE	DS	1	; Fat type. 12, 16, or 32
 BPB_VER		DS	1	; BPB type. 34 (for 3.4) 40 (for 4.0) or 70 (for 7.0)	
 FAT_CLUSTCNT	DS	4	; Number of clusters in volume	
-FAT_SECTROOT	DS	3	; Number of sectors for fixed root directory
+FAT_SECTROOT	DS	4	; Number of sectors for fixed root directory
 				; Max would be 4097 (for 65535 dirents)
 				; But for calc, we might overflow 16-bit
 FAT_DATASTART	DS	4	; Starting sector for data (first cluster)
 FAT_ROOTLBA	DS	4	; LBA of Root directory if fixed
+FAT_LBA		DS	4	; LBA of first FAT
 
 ; Boot Parameter Block, read from disk
 BPB_OFFSET	EQU	0x0B	; Offset from start of boot sector
 ; BPB 2.0 table
+FAT_BPBSTART:
 FAT_SECTSIZ	DS	2	; Bytes per sector
 FAT_CLUSTSIZ	DS	1	; Sectors per cluster
 FAT_RESVSECT	DS	2	; Reserved sectors
@@ -49,7 +58,14 @@ FAT_VOLLBL	DS	11	; Volume Label
 O_VOLLBL40	EQU	0x2B	; For BPB 4.0
 O_VOLLBL70	EQU	0x47	; For BPB 7.0
 
+DIRENTSIZ	EQU	32
+
 #code _ROM
+
+ 
+; Something is fishy around here after we added the FAT_READFILE_BANK
+; FAT_INIT sometimes fails at runtime depending on alignment
+
 
 FAT_INIT:
 #local
@@ -60,7 +76,8 @@ FAT_INIT:
 	LD	(LBA+3), A	
 	LD	HL, SECTOR	
 	CALL	CF_READ		; Read in the boot sector
-
+	
+	
 	; For now we'll assume that the the volume has no partition table
 	; and is formatted as FAT
 	; We'll be using https://jdebp.eu/FGA/determining-fat-widths.html
@@ -68,14 +85,18 @@ FAT_INIT:
 	
 	; First load in the BPB 3.4 table as it's common to the others
 	LD	HL, SECTOR+BPB_OFFSET	
-	LD	DE, FAT_SECTSIZ
+	LD	DE, FAT_BPBSTART
 	LD	BC, BPB_SIZ
 	LDIR			; Copy relevant BPB 3.4 into variables
 	
+	
+	; Clear fat type and bpb
 	XOR	A
 	LD	(FAT_TYPE), A
 	LD	(BPB_VER), A
 	
+	
+	; Begin testing for BPB signatures
 TEST7:
 	LD	A,(SECTOR+0x42)	; Check for BPB 7.0 signature
 	AND	0xFE
@@ -86,6 +107,8 @@ TEST7:
 	LD	HL, S_FAT	; Check if starts with FAT
 	LD	B, LS_FAT
 	CALL	MEMCMP		
+	
+	
 	JP	NZ, TEST4	; Not a BPB type 7
 	; DE pointing to SECTOR+0x55	(Either "     " for calc, "FATxx   ")
 	; Where xx is 12, 16, or 32
@@ -148,14 +171,16 @@ TEST4:	; Try and look for a BPB v4.0
 	JP	Z, FND4FAT32	; Found a BPB 4.0 sig with FAT32
 BPB3_4:	; Assume a BPB3.4 since we couldn't find a 4.0 or 7.0
 COMMON:
+
 	LD	HL, (FAT_TSECT)
 	LD	A, H
 	OR	A, L
 	JR	Z, NOTSECT	; If 0 then use LGTSECT instead
 	; Otherwise copy TSECT into LGTEST
-	LD	A, H
-	LD	(FAT_LGTSECT+0), A
+	
 	LD	A, L
+	LD	(FAT_LGTSECT+0), A
+	LD	A, H
 	LD	(FAT_LGTSECT+1), A
 	XOR	A
 	LD	(FAT_LGTSECT+2), A
@@ -166,18 +191,17 @@ NOTSECT:
 	OR	A, L
 	JR	Z, NOSECTFAT	; If 0 then use SECTFAT32 instead
 	; Otherwise copy SECTFAT into SECTFAT32
-	LD	A, H
-	LD	(FAT_SECTFAT32+0), A
-	LD	A, L
-	LD	(FAT_SECTFAT32+1), A
-	XOR	A
-	LD	(FAT_SECTFAT32+2), A
-	LD	(FAT_SECTFAT32+3), A
+	EX	DE, HL
+	LD	HL, FAT_SECTFAT32
+	CALL	COPY32_16
+
 NOSECTFAT:
+	CALL	CALCCLUST		; Calculate # of clusters
+
 	; Now calculate our fat type if not already known
 	LD	A, (FAT_TYPE)
 	AND	A
-	JR	NZ, KNOWNFAT		; If not 0 then use pre-specified type
+	JP	NZ, KNOWNFAT		; If not 0 then use pre-specified type
 	; Otherwise calculate based on sectors
 	LD	IX, FAT_CLUSTCNT
 	LD	A, (IX+3)
@@ -204,7 +228,7 @@ TESTFAT16:
 FAT12:
 	LD	A, 12
 	LD	(FAT_TYPE), A
-	JR	KNOWNFAT
+	JP	KNOWNFAT
 FAT16:
 	LD	A, 16
 	LD	(FAT_TYPE), A
@@ -212,15 +236,8 @@ FAT16:
 FAT32:
 	LD	A, 32
 	LD	(FAT_TYPE), A
-	; Fall into KNOWNFAT
-KNOWNFAT:
-	; We've determined FAT type, copied relevant BPB values
-	
-	
-	; Determine LBA for first FAT
-
-
-
+	JR	KNOWNFAT
+;-------
 FND7FAT12:
 	LD	A, 12
 	LD	(FAT_TYPE), A
@@ -281,65 +298,86 @@ FND4CALC:
 	LD	BC, 11
 	LDIR			; Copy
 	JP	COMMON
+;--------
+KNOWNFAT:
+	
+	; We've determined FAT type, copied relevant BPB values
+	; Print out a debugging message
+	LD	HL, STR_FATTEMP1
+	CALL	PRINT
+	
+	LD	A, (FAT_TYPE)
+	CALL	PRINTBYTE_DEC		; Print FAT version
+	LD	HL, STR_FATTEMP2
+	CALL	PRINT
+	LD	A, (BPB_VER)	
+	CALL	PRINTBYTE_DEC		; Print BPB version 
+	LD	HL, STR_FATTEMP3
+	CALL	PRINT
+	LD	HL, FAT_VOLLBL
+	LD	B, 11
+	CALL	PRINT_FIX		; Print out the volume label
+	CALL	PRINTNL
+		
+	; Determine LBA for first FAT
+	LD	DE, (FAT_RESVSECT)
+	LD	(FAT_LBA), DE		; First FAT LBA = Reserved sectors
+	LD	DE, 0
+	LD	(FAT_LBA+2), DE		; 
+	
+	RET
+	
+	
+STR_FATTEMP1:
+	.ascii "Found FAT ",0
+STR_FATTEMP2:
+	.ascii " with BPB version ",0
+STR_FATTEMP3:
+	.ascii 10,13,"Volume label: ",0
 #endlocal
 
 
-S_FAT:		DB "FAT"
-LS_FAT		equ .-S_FAT
-S_FSPACE:	DB "     "
-LS_FSPACE:	equ .-S_FSPACE
-S_F12		DB "12   "
-S_F16		DB "16   "
-S_F32		DB "32   "
-
 
 ; Calculate number of clusters in volume
-;  Requires LGTSECT and FATSECT32 to be populated, if 16-bit values are used
-;  then copy them into these 32-bit registers.
+;  Requires LGTSECT and SECTFAT32 to be populated
+;  if 16-bit values are used then copy them into these 32-bit registers.
 ; Stores result in FAT_CLUSTCNT (32-bit)
 CALCCLUST:
 #local
 	; First calculate sectors for fixed root directory:
 	; SectorsInRootDirectory = (BPB.RootDirectoryEntries * 32 + BPB.BytesPerSector - 1) / BPB.BytesPerSector
-	LD	A, (FAT_DIRENTS+0)
+	LD	A, (FAT_DIRENTS+0)		; Initialize to RootDirEnts
 	LD	(FAT_SECTROOT+0), A
 	LD	A, (FAT_DIRENTS+1)
 	LD	(FAT_SECTROOT+1), A
 	XOR	A
 	LD	(FAT_SECTROOT+2), A
+	LD	(FAT_SECTROOT+3), A
+		
 	; Multiply by 32 (10000) (<<4)
 	; Carry flag is clear from XOR
 	LD	IX, FAT_SECTROOT
-	LD	B, 4
+	LD	B, 5
 MUL32:
 	RL	(IX+0)
 	RL	(IX+1)
 	RL	(IX+2)
 	AnD	A			; Clear carry
 	DJNZ	MUL32
-	; Add Bytespersector
-	LD	A, (FAT_SECTSIZ+0)
-	ADD	A, (IX+0)
-	LD	(IX+0), A
-	LD	A, (FAT_SECTSIZ+1)
-	ADC	A, (IX+1)
-	LD	(IX+1), A
-	XOR	A
-	ADC	A, (IX+2)
-	LD	(IX+2), A
-	; Subtract 1
-	LD	A, (IX+0)
-	SUB	1
-	LD	(IX+0), A
-	LD	A, (IX+1)
-	SBC	0
-	LD	(IX+1), A
-	LD	A, (IX+2)
-	SBC	0
-	LD	(IX+2), A
+	
+	LD	HL, FAT_SECTROOT
+	LD	DE, (FAT_SECTSIZ)
+	CALL	ADD32_16		; Add Bytespersector
+	
+	LD	HL, FAT_SECTROOT
+	LD	DE, 1
+	CALL	SUB32_16		; Subtract 1
+	
+	
+	
 	; Now divide by bytes per sector, we'll do repeated subtraction for now
 	LD	IX, FAT_SECTSIZ
-	LD	BC, 0
+	LD	DE, 0
 DIVSECTSIZ:
 	LD	A, (FAT_SECTROOT+0)
 	SUB	(IX+0)
@@ -350,118 +388,634 @@ DIVSECTSIZ:
 	LD	A, (FAT_SECTROOT+2)
 	SBC	0
 	LD	(FAT_SECTROOT+2), A
-	INC	BC
+	INC	DE
 	JR	NC, DIVSECTSIZ		; Repeat until we go under 0
-	DEC	BC			; Make up for the fact we went one beyond
-	; We now have FAT_SECTROOT
+	DEC	DE			; Make up for the fact we went one beyond
+	; We now have FAT_SECTROOT in DE
+	LD	HL, FAT_SECTROOT
+	CALL	COPY32_16		; Copy back into FAT_SECTROOT
+	
+	; Display FAT_SECTROOT
+	LD	HL, STR_SECTROOT
+	CALL	PRINT
+	LD	BC, (FAT_SECTROOT+2)	; High word
+	CALL	PRINTWORD
+	LD	BC, (FAT_SECTROOT)	; Low word
+	CALL	PRINTWORD
+	CALL	PRINTNL
+
+	; Above gives correct calculation  v/
 	
 	; Calculate data start
 	;DataStart = BPB.ReservedSectors + BPB.FATs * SectorsPerFAT + SectorsInRootDirectory
-	LD	IX, FAT_RESVSECT
-	LD	A, (FAT_SECTROOT+0)
-	ADD	(IX+0)
-	LD	(FAT_DATASTART+0), A
-	LD	A, (FAT_SECTROOT+1)
-	ADC	(IX+1)
-	LD	(FAT_DATASTART+1), A
-	LD	A, (FAT_SECTROOT+2)
-	ADC	0
-	LD	(FAT_DATASTART+2), A
-	LD	A, 0
-	ADC	0
-	LD	(FAT_DATASTART+3), A
+	LD	HL, FAT_DATASTART
+	LD	DE, (FAT_RESVSECT)
+	CALL	COPY32_16		; Initialize to Resv sect
+	
+	
+	
+	
 	; Calculate FATs*Sectors pet Fat by repeated addition
+	; And add to DATASTART
+	; NFATS is usually 2 so this is fairly fast
+	
 	LD	A, (FAT_NFATS)
 	LD	B, A
 	LD	IX, FAT_SECTFAT32
 MULFATS:
-	LD	A, (FAT_DATASTART+0)
-	ADD	(IX+0)
-	LD	(FAT_DATASTART+0),A
-	LD	A, (FAT_DATASTART+1)
-	ADD	(IX+1)
-	LD	(FAT_DATASTART+1),A
-	LD	A, (FAT_DATASTART+2)
-	ADD	(IX+2)
-	LD	(FAT_DATASTART+2),A
-	LD	A, (FAT_DATASTART+3)
-	ADD	(IX+3)
-	LD	(FAT_DATASTART+3),A
+	LD	DE, FAT_DATASTART
+	LD	HL, FAT_SECTFAT32
+	CALL	ADD32
+
 	DJNZ	MULFATS
+	
+	LD	HL, FAT_DATASTART
+	LD	DE, FAT_ROOTLBA		; Save root directory pointer before we add its length
+	CALL	COPY32		
+	
+	LD	HL, FAT_DATASTART
+	LD	DE, (FAT_SECTROOT)
+	CALL	ADD32_16		; Add sectors in root directory
+	;
+	
+	
 	; We now have FAT_DATASTART
+	; Dispaly it
+	LD	HL, STR_DATASTART
+	CALL	PRINT
+	LD	BC, (FAT_DATASTART+2)	; High word
+	CALL	PRINTWORD
+	LD	BC, (FAT_DATASTART)	; Low word
+	CALL	PRINTWORD
+	CALL	PRINTNL
+	
+	LD	HL, STR_ROOTSTART
+	CALL	PRINT
+	LD	BC, (FAT_ROOTLBA+2)	; High word
+	CALL	PRINTWORD
+	LD	BC, (FAT_ROOTLBA)	; Low word
+	CALL	PRINTWORD
+	CALL	PRINTNL
+	
+	
+	; Above gives correct calculation  v/
 	
 	; Calculate cluster count
 	; ClusterCount = 2 + (SectorsInVolume - DataStart) / BPB.SectorsPerCluster
-	LD	IX, FAT_DATASTART
-	LD	A, (FAT_LGTSECT+0)
-	SUB	(IX+0)
-	LD	(FAT_CLUSTCNT+0), A
-	LD	A, (FAT_LGTSECT+1)
-	SBC	(IX+1)
-	LD	(FAT_CLUSTCNT+1), A
-	LD	A, (FAT_LGTSECT+2)
-	SBC	(IX+2)
-	LD	(FAT_CLUSTCNT+2), A
-	LD	A, (FAT_LGTSECT+3)
-	SBC	(IX+3)
-	LD	(FAT_CLUSTCNT+3), A
+	LD	DE, FAT_CLUSTCNT
+	LD	HL, FAT_LGTSECT
+	CALL	COPY32			; Initialize to SectorsInVolume
+	
+	LD	DE, FAT_CLUSTCNT
+	LD	HL, FAT_DATASTART
+	CALL	SUB32			; Subtract DataStart
+	
 	; Now divide by Sectors per cluster
 	; Well assume Sectors per cluster is a power of two like it should be
 	; However it's not strictly required to be, but is in practice
 	; We're also not allowing a value of 0 (256)
-	LD	IX, FAT_CLUSTCNT
+	LD	HL, FAT_CLUSTCNT
 	LD	A, (FAT_CLUSTSIZ)
-	LD	B, 0
+	BIT	0, A			; Check that clustsiz isn't 1
+	JR	NZ, NODIVCLUS		; If it is then don't divide
 DIVSCLUS:
-	AND	A			; Clear carry
-	RR	(IX+0)
-	RR	(IX+1)
-	RR	(IX+2)
-	RR	(IX+3)
-	AND	A			; Clear carry
-	RRA				
+	CALL	SRL32			; Shift clustcnt right 1
+	RRA				; Shift clustsiz right by 1 (who cares about carry in bits)
 	BIT	0, A			; Check if we found our match
 	JR	Z, DIVSCLUS
+NODIVCLUS:
+	
 	; Finally add 2
-	LD	A, (FAT_CLUSTCNT+0)
-	ADD	2
-	LD	(FAT_CLUSTCNT+0), A
-	LD	A, (FAT_CLUSTCNT+1)
-	ADC	0
-	LD	(FAT_CLUSTCNT+1), A
-	LD	A, (FAT_CLUSTCNT+2)
-	ADC	0
-	LD	(FAT_CLUSTCNT+2), A
-	LD	A, (FAT_CLUSTCNT+3)
-	ADC	0
-	LD	(FAT_CLUSTCNT+3), A
+	LD	DE, 2
+	LD	HL, FAT_CLUSTCNT
+	CALL	ADD32_16
+	
+	; Display cluster count
+	LD	HL, STR_CLUSTCNT
+	CALL	PRINT
+	LD	BC, (FAT_CLUSTCNT+2)
+	CALL	PRINTWORD
+	LD	BC, (FAT_CLUSTCNT)
+	CALL	PRINTWORD
+	CALL	PRINTNL
 	
 	RET
 #endlocal
 
-; Set the current cluster to the value in FAT_CLUSTER
-FAT_SETCLUSTER:
-	XOR	A
-	LD	(FAT_CURSECT), A	; Reset current sector
-	; Convert CLUSTER into LBA
+
+
+
+; List the root directory
+FAT_DIR_ROOT:
+#local
+	LD	A, (FAT_TYPE)		; Check which fat version 
+	CP	16+1			; We're only supporting FAT12/16 fixed root directories for now
+	JR	C, ISFIXED
+	; Otherwise display a message and return
+	LD	HL, STR_NOROOT
+	CALL	PRINTN
+	RET
+ISFIXED:
 	
-	; Multiply cluster # by sectors per cluster
-	LD	HL, (FAT_CLUSTER+0)
-	LD	(FAT_CLUSTLBA+0), HL
-	LD	HL, (FAT_CLUSTER+2)
-	LD	(FAT_CLUSTLBA+2), HL
+
+	LD	HL, FAT_ROOTLBA		; Root directory is right before the start of data
+	LD	DE, LBA
+	CALL	COPY32
+	
+	LD	HL, SECTOR
+	CALL	CF_READ			; Read in first sector of directory
+	
+	LD	HL, STR_ROOTLIST
+	CALL	PRINTN
+	
+	LD	A, (FAT_DIRENTS)	; Number of entries in root directory
+	LD	B, A			; Copy to B
+	
+	LD	HL, SECTOR		; HL points to our current directory entry
+
+	
+	PUSH	BC
+DIRLOOP:
+	PUSH	HL
+	CALL	PRINTENT		; Print directory entry HL
+	POP	HL
+	
+	POP	BC			; Restore counter
+	
+	
+	DEC	B			; Dec
+	JR	Z, DONE			; If no entries left then we're done
+	PUSH	BC			; Save counter
+	
+	LD	DE, DIRENTSIZ
+	ADD	HL, DE			; Advance to the next directory entry
+	LD	DE, SECTOR+512		; End of sector
+	CMP16	DE			; Compare HL with DE
+	JR	C, NOLOAD		; If < SECTOR+512 then we don't need to load next
+	; Otherwise Load next sector
+	LD	DE, 1
+	LD	HL, LBA
+	CALL	ADD32_16		; Increment LBA
+	LD	HL, SECTOR
+	CALL	CF_READ
+	LD	HL, SECTOR		; Reset HL
+NOLOAD:
+	JR	DIRLOOP			;
+DONE:
+	LD	HL, STR_LISTBREAK
+	CALL	PRINTN
+	RET
+#endlocal	
+
+; Print out a directory entry
+; HL - points to first byte of entry
+PRINTENT:
+#local
+ENT_ATTR	equ	11		; Attribute byte
+ENT_FS		equ	28
+	PUSH	HL
+	POP	IX			; Copy pointer into IX for indexing
+	LD	A, (IX+ENT_ATTR)	; Read attribute byte
+	; Attb byte is:
+	; 1 - Read Only, 2 - Hidden , 4 - System, 8 - Volume ID
+	; 16 - Directory, 32 - Archive
+	AND	A
+	JR	Z, SKIPENT		; Skip blank entries
+
+	AND	$0F			; Mask off low bits
+	CP	$0F			; If Read only, hidden, system, and volume_id then is a LFN entry
+	JR	Z, SKIPENT		; Skip LFN entries
+	AND	$0E			; If HIDDEN, SYSTEM, or VOLUME_ID 
+	JR	NZ, SKIPENT		; Then don't show files
+	LD	A, (IX+0)		; Check first character of filename
+	CP	$E5			; If $E5 then the file is 'deleted'
+	JR	Z, SKIPENT
+	; We want our printed format to be:
+	; 0         1         2         3         4
+	; 01234567890123456789012345678901234567890
+	; FILENAME EXT   R    FILESIZE
+	; or
+	; DIRNAME  EXT        <DIR>   
+	
+	; Print the name
+	PUSH	IX
+	POP	HL			; Move to HL
+	LD	B, 8			; Filename is 8 ch long
+	CALL	PRINT_FIX		; EVIL: We're going to be evil and rely on PRINTFIX not preserving HL
+	LD	A, ' '			
+	CALL	PRINTCH	
+	LD	B, 3			; Extension is 3 ch long
+	CALL	PRINT_FIX		; Print extension
+	LD	B, 3			; 3ch space
+	CALL	SPACE
+	; Print if Read-only or not
+	LD	A, (IX+ENT_ATTR)	; Read attribute byte
+	AND	1			; Check if read-only
+	JR	Z, NORDONLY
+	LD	A, 'R'
+	CALL	PRINTCH
+	JR	AFTER1
+NORDONLY:
+	LD	A, ' '
+	CALL	PRINTCH
+AFTER1:
+	LD	B, 4
+	CALL	SPACE
+	; Print filesize or <DIR> if directory
+	LD	A, (IX+ENT_ATTR)
+	AND	$10
+	JR	NZ, ISDIR
+	
+	LD	B, (IX+ENT_FS+3)		; High word of filesize
+	LD	C, (IX+ENT_FS+2)		
+	CALL	PRINTWORD
+	LD	B, (IX+ENT_FS+1)		; Low word of filesize
+	LD	C, (IX+ENT_FS+0)		
+	CALL	PRINTWORD
+	CALL	PRINTNL
+	RET
+ISDIR:
+	LD	HL, STR_DIR
+	CALL	PRINTN
+SKIPENT:
+	RET
+	
+	
+SPACE:
+	LD	A, ' '
+	CALL	PRINTCH
+	DJNZ	SPACE
+	RET
+#endlocal	
+
+
+
+
+; Open a file
+; HL points to a string of the filename
+;  name.ext (8.3)
+FAT_OPENFILE:
+#local
+	; Find file in root directory
+	LD	A, (FAT_TYPE)		; Check which fat version 
+	CP	16+1			; We're only supporting FAT12/16 fixed root directories for now
+	JR	C, ISFIXED
+	; Otherwise display a message and return
+	LD	HL, STR_NOROOT
+	CALL	PRINTN
+	RET
+ISFIXED:
+	LD	HL, FAT_ROOTLBA		; Root directory is right before the start of data
+	LD	DE, LBA
+	CALL	COPY32
+	
+	LD	HL, SECTOR
+	CALL	CF_READ			; Read in first sector of directory
+	
+	LD	A, (FAT_DIRENTS)	; Number of entries in root directory
+	LD	B, A			; Copy to B
+	
+	LD	HL, SECTOR		; HL points to our current directory entry
+
+	
+	PUSH	BC
+DIRLOOP:
+	PUSH	HL
+	; First 11 bytes are the filename+ext
+	LD	DE, FAT_FILENAME
+	LD	B, 11
+	CALL	MEMCMP
+	JR	Z, FOUND	
+	POP	HL
+	
+	POP	BC			; Restore counter
+	DEC	B			; Dec
+	JR	Z, NOTFOUND		; If no entries left then we're done
+	PUSH	BC			; Save counter
+	
+	LD	DE, DIRENTSIZ
+	ADD	HL, DE			; Advance to the next directory entry
+	LD	DE, SECTOR+512		; End of sector
+	CMP16	DE			; Compare HL with DE
+	JR	C, NOLOAD		; If < SECTOR+512 then we don't need to load next
+	; Otherwise Load next sector
+	LD	DE, 1
+	LD	HL, LBA
+	CALL	ADD32_16		; Increment LBA
+	LD	HL, SECTOR
+	CALL	CF_READ
+	LD	HL, SECTOR		; Reset HL
+NOLOAD:
+	JR	DIRLOOP			;
+NOTFOUND:
+	LD	HL, STR_FNF
+	CALL	PRINTN	
+	SCF				; Set carry to indicate failure
+	RET
+FOUND:
+	; Found the file, now open it
+	POP	IX			; Restore pointer to the directory entry
+	POP	BC			; BC was left on the stack, remove it
+	; Okay this is a really inefficient copy code, but look how clean it looks
+	; Copy the length
+	LD	A, (IX+28)		; File size low byte
+	LD	(FAT_FILELEN+0), A
+	LD	A, (IX+29)		; File size 
+	LD	(FAT_FILELEN+1), A
+	LD	A, (IX+30)		; File size 
+	LD	(FAT_FILELEN+2), A
+	LD	A, (IX+31)		; File size high byte
+	LD	(FAT_FILELEN+3), A
+	; Copy the starting cluster
+	LD	A, (IX+26)		; Low word
+	LD	(FAT_FILECLUS+0), A
+	LD	A, (IX+27)
+	LD	(FAT_FILECLUS+1), A
+	LD	A, (IX+20)		; High word (Always 0 on FAT12/16)
+	LD	(FAT_FILECLUS+2), A
+	LD	A, (IX+21)
+	LD	(FAT_FILECLUS+3), A
+	; File is now 'opened'
+	AND	A			; Clear carry for success
+	RET
+#endlocal
+
+;--------
+; Copies the name.ext (8.3) filename into the FILENAME buffer
+; in space padded fixed width format 8+3 'NAME    EXT'
+FAT_SETFILENAME:
+#local
+	CALL	CLEARFN
+	; Convert filename to 8+3 space padded
+	; First read up to 8 characters, stopping early if we see a dot or NULL
+	LD 	DE, FAT_FILENAME
+	
+	LD	B, 8
+NAMELOOP:
+	LD	A, (HL)
+	CP	'.'
+	JR 	Z, DOEXT
+	AND	A
+	JR	Z, DONE
+	LD	(DE), A
+	INC	DE
+	INC	HL
+	DJNZ	NAMELOOP
+DOEXT:
+	LD	DE, FAT_FILENAME+8
+	LD	B, 3
+EXTLOOP:
+	INC	HL
+	LD	A, (HL)
+	AND	A
+	JR	Z, DONE
+	LD	(DE), A
+	INC 	DE
+	DJNZ	EXTLOOP
+DONE:
+	RET
+#endlocal
+
+;------
+; Clear the filename to blank (all spaces)
+CLEARFN:
+#local
+	PUSH	HL
+	PUSH	BC
+	LD	HL, FAT_FILENAME
+	LD	B, 11
+	LD	A, ' '
+LOOP:
+	LD	(HL), A
+	INC	HL
+	DJNZ	LOOP
+	POP	BC
+	POP	HL
+	RET
+#endlocal
+	
+;-----
+; Read entire current file into memory
+FAT_READFILE:
+#local
+	LD	(FAT_CURADDR), HL	; Save address
+	LD	BC, (FAT_FILELEN)	; Read only low word of length (we're not doing backswitching in this load)
+	PUSH	BC
+	LD	A, (FAT_CLUSTSIZ)
+	LD	(FAT_CURSECT), A	; Current sector within cluster (backwards)
+	
+	
+	; Assume file is open for now, add some open flag later
+	LD	HL, FAT_FILECLUS
+	LD	DE, FAT_CLUSTER	
+	CALL	COPY32			; Copy starting cluster
+	CALL	CLUST2LBA		; Convert cluster to LBA 
+	
+
+	; Debug print, display current cluster and LBA
+	PUSH	BC
+	PUSH	HL
+	LD	HL, STR_READF1
+	CALL	PRINT
+	LD	BC, (FAT_CLUSTER)
+	CALL	PRINTWORD
+	LD	HL, STR_READF2
+	CALL	PRINT
+	
+	LD	BC, (FAT_CLUSTLBA+2)
+	CALL	PRINTWORD
+	LD	BC, (FAT_CLUSTLBA)
+	CALL	PRINTWORD
+	CALL	PRINTNL
+	POP	HL
+	POP	BC
+	
+	
+	LD	HL, FAT_CLUSTLBA
+	LD	DE, LBA
+	CALL	COPY32			; Copy to CF card's LBA
+LOOP:
+	
+	LD	HL, STR_READF4
+	CALL	PRINT
+	LD	BC, (FAT_CURADDR)
+	CALL	PRINTWORD
+	LD	HL, STR_READF2
+	CALL	PRINT
+	LD	BC, (LBA+2)
+	CALL	PRINTWORD
+	LD	BC, (LBA+0)
+	CALL	PRINTWORD
+	CALL	PRINTN
+
+
+	LD	HL, (FAT_CURADDR)	; Restore address
+	CALL	CF_READ			; Read sector to memory
+	
+	LD	HL, (FAT_CURADDR)
+	LD	DE, 512
+	ADD	HL, DE			; Advance address
+	LD	(FAT_CURADDR), HL	; Save address
+	
+	POP	HL			; Restore length
+	AND	A			; Clear carry
+	SBC	HL, DE			; Decrement length left
+	JP	PE, DONE2		; If < 0 then we're done
+	PUSH	HL
+	
+	LD	HL, FAT_CURSECT
+	DEC	(HL)
+	JR	Z, NEWCLUST
+	; Increment LBA to next sector
+	LD	DE, 1
+	LD	HL, LBA
+	CALL	ADD32_16
+	JR	LOOP
+NEWCLUST:
+	; We're done our cluster, need to fetch the next one
+	CALL	FAT_NEXTCLUST		; Fetch next cluster from FAT
+	
+	; Debug print next cluster
+	PUSH	HL
+	PUSH	BC
+	LD	HL, STR_READF3
+	CALL	PRINT
+	LD	BC, (FAT_CLUSTER)
+	CALL	PRINTWORD
+	CALL	PRINTNL
+	POP	BC
+	POP	HL
+	
+	; Check if end of file
+	CALL	FAT_ISCLUSTEND	
+	JR	NC, DONE		; If end of file chain then we're done
+	; If not follow the chain, and keep going
+	CALL	CLUST2LBA		; Convert cluster to LBA
+	
+	LD	HL, FAT_CLUSTLBA
+	LD	DE, LBA
+	CALL	COPY32			; Copy to CF card's LBA
+
+DONE:
+	POP	HL			; Remove length from stack
+DONE2:
+	RET
+#endlocal
+
+
+
+
+;--------
+; Convert cluster to sector number
+CLUST2LBA:
+#local
+	
+
+	; We need to multiply the cluster # by the cluster size
+	; Then add DATASTART to it.
+	
+	LD	HL, FAT_CLUSTER
+	LD	DE, 2
+	CALL	SUB32_16		; Remove the starting cluster offset (0 and 1 reserved
+	
+	LD	HL, FAT_CLUSTER
+	LD	DE, FAT_CLUSTLBA
+	CALL	COPY32			; Copy starting value
 	
 	
 	
-	; Add LBA of first cluster (FAT_DATASTART)
+	; Now multiply by the cluster size
+	LD	A, (FAT_CLUSTSIZ)	; 
+	LD	B, A
+MULLOOP:
+	DEC	B
+	JR	Z, DONEMUL
+	LD	HL, FAT_CLUSTER
+	LD	DE, FAT_CLUSTLBA
+	CALL	ADD32			; Add cluster # repeatedly to multiply
+	JR	MULLOOP
+DONEMUL:
+	; Now we add to need the starting offset
+	LD	HL, FAT_DATASTART
+	LD	DE, FAT_CLUSTLBA
+	CALL	ADD32
+	; And we're done, restore original cluster #
+	LD	HL, FAT_CLUSTER
+	LD	DE, 2
+	CALL	ADD32_16		; Restore the starting cluster offset (0 and 1 reserved
 	
 	
 	RET
+#endlocal
 
-; Read in the next sector in the current cluster
-FAT_READSECT:
+;-----------
+; Advance to the next cluster
+FAT_NEXTCLUST:
+#local
+	; Look up current cluster in FAT
+	; We need to read in the FAT from the disk
+	; To do so we need to figure out which sector in the FAT
+	; contains the current cluster
+	LD	HL, FAT_CLUSTER
+	LD	DE, 2
+	CALL	SUB32_16		; Remove cluster offset
+	; BAD: Assuming FAT16 only for now. Handle FAT12 later
+	; For FAT16
+	; FAT Sector  = FAT_LBA + (cluster * 2)/512 (sect size)
+	; Offset inside sector = (cluster * 2) % 512
+	; BAD: We're dealing with only hard-drives, assume sector size of 512
+	;      This makes the calcuation instead: FAT_LBA + (cluster/256)
+	;      Dividing by 256 is just a shift by one byte
+	LD	HL, FAT_CLUSTER+1 	; +1 to shift off the lowest byte (/256)
+	LD	DE, LBA
+	CALL	COPY32
+	XOR	A			; Clear A
+	LD	(LBA+3), A		; Clear highest byte of LBA since it contains garbage
+	; We now have (cluster * 2) / 512 in LBA
+	LD	HL, FAT_LBA
+	LD	DE, LBA
+	CALL	ADD32			; Add FAT_LBA to get the sector to read
 	
+	LD	HL, SECTOR
+	CALL	CF_READ			; Read sector into buffer
 	
+	; Our offset in the sector is (cluster * 2) % 512
+	; BAD: Still assuming a sector size of 512 we can simply take the low byte of CLUSTER
+	;      and multiply it by 2 to get the offset
+	LD	A, (FAT_CLUSTER)
+	LD	L, A
+	LD	H, 0
+	ADD	HL, HL			; (cluster * 2) % 512
+	LD	DE, SECTOR
+	ADD	HL, DE			; Add starting address of the sector to get our pointer
+	
+	LD	A, (HL)			; Low byte of next cluster
+	LD	(FAT_CLUSTER), A
+	INC	HL
+	LD	A, (HL)			; High byte of next cluster
+	LD	(FAT_CLUSTER+1), A
+	; Since we're assuming FAT_16 here, zero out upper bytes just incase
+	XOR	A
+	LD	(FAT_CLUSTER+2), A
+	LD	(FAT_CLUSTER+3), A
+	
+	RET
+#endlocal
+
+;-------
+; Is the current cluster the end of the chain
+; Resets C flag if it is, sets C if not
+; BAD: Assuming FAT16 for now
+FAT_ISCLUSTEND:
+#local
+	LD	HL, (FAT_CLUSTER)
+	LD	DE, 0xFFF0
+	CMP16	DE			; 16-bit compare, if < 0xFFF0 then set C flag
+	; If < 0xFFF0 then the cluster is not the end of the chain
+	RET
+#endlocal
+
+;--------
 ; Compare memory at (HL) to (DE) for B bytes
 ; Set's Z flag to results
 ; Pointers left on first byte not to match
@@ -473,3 +1027,169 @@ MEMCMP:
 	INC	DE
 	DJNZ	MEMCMP
 	RET			; Z flag still set from CP
+
+
+
+S_FAT:		DB "FAT"
+LS_FAT		equ .-S_FAT
+S_FSPACE:	DB "     "
+LS_FSPACE:	equ .-S_FSPACE
+S_F12		DB "12   "
+S_F16		DB "16   "
+S_F32		DB "32   "
+
+STR_SECTROOT:
+	.ascii "Sectors for fixed root: $",0
+STR_DATASTART:
+	.ascii "Data start sector:      $",0
+STR_CLUSTCNT:
+	.ascii "Total clusters:         $",0
+STR_ROOTSTART:
+	.ascii "Root dir sector:        $",0
+STR_NOROOT:
+	.ascii "Only fixed root directory supported",0
+	
+STR_ROOTLIST:
+	.ascii "Root directory:",13,10
+	.ascii "Filename       RO   Size (HEX)",13,10
+	; Fall through
+STR_LISTBREAK:
+	.ascii "------------------------------",0
+	      ; 0         1         2         3         4
+	      ; 01234567890123456789012345678901234567890
+	      ; FILENAME EXT   R    FILESIZE
+STR_DIR:
+	.ascii "<DIR>",0
+STR_FNF:
+	.ascii "File not found!",0
+STR_READF1:
+	.ascii "Reading cluster: $",0
+STR_READF2:
+	.ascii " LBA: $",0
+STR_READF3:
+	.ascii "Next cluster: $",0
+STR_READF4:
+	.ascii "Current address: $",0
+
+
+
+
+;-----
+; Read entire current file into memory in specified bank
+FAT_READFILE_BANK:
+#local
+	LD	(FAT_BANK), A		; Save bank
+	LD	(FAT_CURADDR), HL	; Save address
+	LD	BC, (FAT_FILELEN)	; Read only low word of length (we're not doing backswitching in this load)
+	PUSH	BC
+	LD	A, (FAT_CLUSTSIZ)
+	LD	(FAT_CURSECT), A	; Current sector within cluster (backwards)
+	
+	
+	; Assume file is open for now, add some open flag later
+	LD	HL, FAT_FILECLUS
+	LD	DE, FAT_CLUSTER	
+	CALL	COPY32			; Copy starting cluster
+	CALL	CLUST2LBA		; Convert cluster to LBA 
+	
+
+	; Debug print, display current cluster and LBA
+	PUSH	BC
+	PUSH	HL
+	LD	HL, STR_READF1
+	CALL	PRINT
+	LD	BC, (FAT_CLUSTER)
+	CALL	PRINTWORD
+	LD	HL, STR_READF2
+	CALL	PRINT
+	
+	LD	BC, (FAT_CLUSTLBA+2)
+	CALL	PRINTWORD
+	LD	BC, (FAT_CLUSTLBA)
+	CALL	PRINTWORD
+	CALL	PRINTNL
+	POP	HL
+	POP	BC
+	
+	
+	LD	HL, FAT_CLUSTLBA
+	LD	DE, LBA
+	CALL	COPY32			; Copy to CF card's LBA
+LOOP:
+	
+	LD	HL, STR_READF4
+	CALL	PRINT
+	LD	A, '_'
+	CALL	PRINTCH
+	LD	BC, (FAT_CURADDR)
+	CALL	PRINTWORD
+	LD	HL, STR_READF2
+	CALL	PRINT
+	LD	BC, (LBA+2)
+	CALL	PRINTWORD
+	LD	BC, (LBA+0)
+	CALL	PRINTWORD
+	CALL	PRINTN
+
+
+	LD	HL, SECTOR		; Read into SECTOR buffer, we'll copy to bank later
+	CALL	CF_READ			; Read sector to memory
+	
+	
+	; Copy to bank
+	LD	HL, SECTOR
+	LD	DE, (FAT_CURADDR)
+	LD	BC, 512
+	LD	A, (FAT_BANK)
+
+	CALL	RAM_BANKCOPY		; Do a bank copy
+	
+	LD	HL, (FAT_CURADDR)
+	LD	DE, 512
+	ADD	HL, DE			; Advance address
+	LD	(FAT_CURADDR), HL	; Save address
+	
+	POP	HL			; Restore length
+	AND	A			; Clear carry
+	SBC	HL, DE			; Decrement length left
+	JP	PE, DONE2		; If < 0 then we're done
+	PUSH	HL
+	
+	LD	HL, FAT_CURSECT
+	DEC	(HL)
+	JR	Z, NEWCLUST
+	; Increment LBA to next sector
+	LD	DE, 1
+	LD	HL, LBA
+	CALL	ADD32_16
+	JR	LOOP
+NEWCLUST:
+	; We're done our cluster, need to fetch the next one
+	CALL	FAT_NEXTCLUST		; Fetch next cluster from FAT
+	
+	; Debug print next cluster
+	PUSH	HL
+	PUSH	BC
+	LD	HL, STR_READF3
+	CALL	PRINT
+	LD	BC, (FAT_CLUSTER)
+	CALL	PRINTWORD
+	CALL	PRINTNL
+	POP	BC
+	POP	HL
+	
+	; Check if end of file
+	CALL	FAT_ISCLUSTEND	
+	JR	NC, DONE		; If end of file chain then we're done
+	; If not follow the chain, and keep going
+	CALL	CLUST2LBA		; Convert cluster to LBA
+	
+	LD	HL, FAT_CLUSTLBA
+	LD	DE, LBA
+	CALL	COPY32			; Copy to CF card's LBA
+
+DONE:
+	POP	HL			; Remove length from stack
+DONE2:
+	RET
+#endlocal

@@ -16,6 +16,56 @@ PRINTBYTE:
 	POP	BC
 	JP	PRINTNYB	; Print low Tail call
 
+PRINTBYTE_DEC:
+#local
+	PUSH	BC
+	LD	B, A		; Save byte
+	CP	100		
+	JR	NC, HUNDRED	; If >= 100 then print digit
+	CP	10
+	JR	NC, TENS	; If >= 10 then print digit
+	JR	ONES
+HUNDRED:
+	LD	C, '1'
+	SUB	100		
+	CP	100			
+	JR	C, NOINC100	; If < 200 then don't incrment
+	INC	C
+NOINC100:
+	LD	B, A		; Save byte
+	LD	A, C
+	CALL	PRINTCH		; Print 100's digit
+TENS:
+	LD	C, '0'
+	LD	A, B		; Restore #
+TENSLOOP:
+	CP	10
+	JR	C, DOTENS	; If < 10 then print already
+	INC	C
+	SUB	10
+	JR	TENSLOOP
+DOTENS:
+	LD	B, A		; Save result
+	LD	A, C
+	CALL	PRINTCH
+ONES:
+	LD	C, '0'
+	LD	A, B		; Restore #
+ONESLOOP:
+	CP	1
+	JR	C, DOONES	; If < 1 then print already
+	INC	C
+	SUB	1
+	JR	ONESLOOP
+DOONES:
+	LD	B, A		; Save result
+	LD	A, C
+	CALL	PRINTCH
+	
+	POP	BC
+	RET
+#endlocal
+
 ;--------
 ; Print a hex word to the console
 ; BC - word
@@ -44,7 +94,7 @@ NOADJ:
 ; Print a character to console
 ; A - ch
 PRINTCH:
-	JP	DISP_WRITE	; Tail Call
+	JP	DISP_WRITE_ESC	; Tail Call
 	;JP	SERIAL_WRITE	; Tail call
 
 ;--------
@@ -61,6 +111,18 @@ PRINT:
 END:
 	RET
 #endlocal
+
+;-------
+; Print a fixed length string to console
+; HL - string
+; B - length (0 = 256)
+PRINT_FIX:
+	LD	A, (HL)
+	CALL	PRINTCH
+	INC	HL
+	DJNZ	PRINT_FIX
+	RET
+
 
 
 PRINTN:

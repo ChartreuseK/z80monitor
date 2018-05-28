@@ -22,6 +22,40 @@ CF_INIT::
 	CALL	CF_LBUSY
 	LD	A, 0x01		; 1 sector to read
 	OUT	(CF_COUNT), A
+	CALL	CF_LBUSY
+	
+	CALL	DELAY_MS
+	
+	LD	A, 0x01		; 8-bit mode
+	OUT	(CF_FEAT_ERR), A; Write to features reg
+	CALL	CF_LBUSY
+	LD	A, 0xEF		; Set features command
+	OUT	(CF_CMD_STAT), A	
+	CALL	CF_LBUSY
+	LD	A, 0x01		; 1 sector to read
+	OUT	(CF_COUNT), A
+	
+	CALL	DELAY_MS
+	
+	LD	A, 0x01		; 8-bit mode
+	OUT	(CF_FEAT_ERR), A; Write to features reg
+	CALL	CF_LBUSY
+	LD	A, 0xEF		; Set features command
+	OUT	(CF_CMD_STAT), A	
+	CALL	CF_LBUSY
+	LD	A, 0x01		; 1 sector to read
+	OUT	(CF_COUNT), A
+	
+	CALL	DELAY_MS
+	
+	LD	A, 0x01		; 8-bit mode
+	OUT	(CF_FEAT_ERR), A; Write to features reg
+	CALL	CF_LBUSY
+	LD	A, 0xEF		; Set features command
+	OUT	(CF_CMD_STAT), A	
+	CALL	CF_LBUSY
+	LD	A, 0x01		; 1 sector to read
+	OUT	(CF_COUNT), A
 	RET
 ;---------------------------------------
 
@@ -74,6 +108,7 @@ CF_LDATARDY:
 ; Var LBA: - 28 bit LBA address to read from
 CF_READ::
 #local
+TRY:	
 	CALL	CF_LBUSY	; Load LBA address to access
 	LD	A, (LBA+0)
 	OUT	(CF_LBA0), A
@@ -88,15 +123,18 @@ CF_READ::
 	OR	0xE0		; Set high bits to indicate LBA mode
 	OUT	(CF_LBA3), A
 	
-TRY:
+
 	CALL	CF_LRDY
 	LD	A, 0x20		; Read sector
 	OUT	(CF_CMD_STAT), A		
 	CALL	CF_LDATARDY	; Wait for data
 	
+	
 	LD	A, (CF_CMD_STAT); Check status
 	AND	0x01		; Check error bit
-	JP	NZ, TRY
+	;JP	NZ, TRY
+	; FOR SOME REASON ERROR IS BEING SET EVEN WITH NO ERROR
+	
 	
 	PUSH	HL		; Save start address
 	LD	B, 0		; Read 256 words/512 bytes

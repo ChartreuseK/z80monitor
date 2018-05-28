@@ -38,6 +38,8 @@ FAT_TYPE	DS	1	; Detected Fat type - 12, 16, 32 (or 64 for ExFAT)
 SECTSIZ_O	EQU	11	; Offset from start of sector
 VOLID_O		EQU	39	; 39 for FAT12/16, 67 for FAT32
 
+
+
 FAT_INIT::
 #local
 	XOR	A
@@ -100,6 +102,11 @@ SFNF_ADD:
 	LD	(FAT_ROOTLBA+3), A
 	; FAT_ROOTLBA = ( FAT_FATLBA + (FAT_SECTFAT) * FAT_NFATS) )
 	
+	LD	BC, (FAT_ROOTLBA+2)	; High word
+	CALL	PRINTWORD
+	LD	BC, (FAT_ROOTLBA)	; Low word
+	CALL	PRINTWORD
+	CALL	PRINTNL
 	
 	; Copy volume ID and name
 	LD	HL, SECTOR+VOLID_O

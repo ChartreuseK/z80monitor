@@ -6,20 +6,38 @@
 
 CPU_FREQ	equ		4000000		; 4MHz
 
-#data _RAM,0x8000,0x7000
-#code _ROM,0,0x8000
+#data _RAM,0xFC00,0x400		; Limit to top 1kB of RAM
+; Space for BANKCOPY in memory
+RAM_BANKCOPY	DS	BANKCOPYLEN
+RAM_BANKPEEK	DS	BANKPEEKLEN
+RAM_BANKPOKE	DS	BANKPOKELEN
+.align 2
+#code _ROM,0x0000,0x8000	
 ;===============================================================================
 ;===============================================================================
 ; Reset Vectors
 RESET:
+	LD	A, 0xAB		; Monitor bank setup
+	OUT	(PORT_BANK), A	; Bank switch
 	JP	START
-
-	ORG	0x08		; RST $08
-	JP	START
-	ORG	0x10		; RST $10
-	JP	START
-	ORG	0x18		; RST $18
-	JP	START
+	
+	; !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	; This code must be preset in every bank that is to be loaded in the low slot
+	ORG	0x08		; RST $08 -- BIOS call
+	LD	A, 0xAB		; Load monitor bank setup
+	OUT	(PORT_BANK), A	; Bank switch
+	; We're now in the monitor ROM
+	JP	BIOS
+BIOSRET:
+	LD	A, (CURBANK)	; DON't CALL RST $10, it's the first byte of address CURBANK
+	OUT	(PORT_BANK), A
+	RET		
+BIOSSTART:	
+	LD	A, (CURBANK)	; DON't CALL RST $18
+	OUT	(PORT_BANK), A
+	JP	0x0100			
+	
+	; !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	ORG	0x20		; RST $20
 	JP	START
 	ORG	0x28		; RST $28
@@ -42,11 +60,13 @@ START:
 #local	
 	; First thing we need to do is set up the bank switch register to map
 	; some RAM. By default we have the low 32kB of ROM in both 32kB banks.
-	; 0x8B Map 1st page of ram to high 32kB, RAM Bank 3 to low (ROM emulation loader)
-	LD	A, 0x8B		
+	; OLD: 0x8B Map 1st page of ram to high 32kB, RAM Bank 3 to low (ROM emulation loader)
+	; 0xAB RAM Bank 2 to high 32kB, RAM Bank 3 to low (ROM emulation loader)
+	; (RAM BANK 0 and RAM BANK 1 for use of program
+	LD	A, 0xAB		
 	OUT	(PORT_BANK), A
 
-	LD	SP, 0xFFFF	; Set stack to top of RAM
+	LD	SP, 0x0000	; Set stack to top of RAM
 	
 	; Init 8255
 	LD	A, 0xC1		; Mode 2 on Port A (and ctrl on port C), C (low) input
@@ -65,16 +85,21 @@ START:
 ;	OR	L
 ;	JR	NZ, CLRMEM	; Clear till 0xFFFF
 	
-	CALL	LCDINIT
+	;CALL	LCDINIT
 	
 	LD	HL, STR_LCDBANNER
-	CALL	LCDPUTS
+	;CALL	LCDPUTS
+	
+	CALL	DELAY_MS
+	
 	NOP	; Required before CF_INIT otherwise will fail! (Why?!)
 	NOP
 	CALL	CF_INIT
-	CALL	SERIAL_INIT
+	;CALL	SERIAL_INIT
 	LD	A, 0
-	CALL	SERIAL_WRITE	; Write a null to clear out the buffer
+	;CALL	SERIAL_WRITE	; Write a null to clear out the buffer
+	
+	CALL	DELAY_MS
 	
 	CALL	DISP_INIT
 	
@@ -89,7 +114,8 @@ GRAPHBNR:
 	INC	HL
 	DJNZ	GRAPHBNR
 	
-	LD	A, 0x03		; 80 col bold
+	;LD	A, 0x03		; 80 col bold
+	LD	A, 0x02		; 40 col bold
 	CALL	DISP_LMODE
 	
 	
@@ -98,34 +124,35 @@ GRAPHBNR:
 	LD	HL, STR_BANNER
 	CALL	PRINT
 	
+	
+	; Copy bank  code into memory
+	LD	HL, BANKCOPY
+	LD	DE, RAM_BANKCOPY
+	LD	BC, BANKCOPYLEN+BANKPEEKLEN+BANKPOKELEN
+	LDIR
+	
 	CALL	CF_DETECT
+	
+	
 	JR	NZ, DRVPRES
 	LD	HL, STR_NODRIVE
 	CALL	PRINTN
+	
+	
 	JR	CMD_LOOP
 DRVPRES:
 	LD	HL, STR_DRIVE
 	CALL	PRINTN
 	
-	CALL	FAT_INIT
+	LD	HL, 0
+	ADD	HL, SP
+	LD	BC, HL
+	CALL	PRINTWORD
 	
-	LD	HL, STR_VOLLBL
-	LD	A, '"'
-	CALL	PRINTCH
-	LD	HL, FAT_VOLLBL
-	CALL	PRINT
-	LD	A, '"'
-	CALL	PRINTCH
-	LD	A, ' '
-	CALL	PRINTCH
-	LD	HL, STR_VOLID
-	CALL	PRINT
-	LD	BC, (FAT_VOLID+2)
-	CALL	PRINTWORD
-	LD	A, '-'
-	CALL	PRINTCH
-	LD	BC, (FAT_VOLID)
-	CALL	PRINTWORD
+	
+	CALL	FAT_INIT
+WARM::
+	LD	SP, 0x0000	; Reset stack on warm restart
 	CALL	PRINTNL
 CMD_LOOP:
 	CALL 	DISP_PROMPT	; Display prompt + cur addr
@@ -553,12 +580,14 @@ CMD_RUN:
 	CALL	SKIPWHITE
 	CALL	PARSENUM	; Check if we got a number
 	JR	C, CUR		; If no number, run at current addr
-	LD	HL, START	; Do a cold start if run returns
+	;LD	HL, START	; Do a cold start if run returns
+	LD	HL, WARM	; Try and do a warm start if run returns
 	PUSH	HL		; Return address
 	PUSH	BC		; Address to jump to
 	RET			; Jump to code
 CUR:
-	LD	HL, START	; Do a cold start if run returns
+	;LD	HL, START	; Do a cold start if run returns
+	LD	HL, WARM	; Try and do a warm start if run returns
 	PUSH	HL		; Return address
 	LD	HL, (CURADDR)
 	PUSH	HL		; Address to jump to
@@ -614,8 +643,104 @@ CMD_TIME:
 #endlocal
 
 CMD_LIST:
-	;CALL	FAT_DIR_ROOT
+	CALL	FAT_DIR_ROOT
 	RET
+	
+	
+	
+CMD_COPYFILE:
+#local
+	INC	HL		; Skip command
+	CALL	SKIPWHITE	; Skip whitespace
+	LD	A, (HL)
+	AND	A
+	JR	Z, NOFILE	; If null terminator then no filename given
+	
+	PUSH	HL		; Save start pointer
+	CALL	EXTRACTARG	; Extract argument (null terminate it)
+	POP	HL		; Restart pointer to string
+	
+	PUSH	HL
+	CALL	PRINTN		; Print filename
+	POP	HL
+
+	CALL	FAT_SETFILENAME	; Set filename
+	
+	CALL	FAT_OPENFILE
+	JR	C, NOFILE	; If failure to open
+	
+	LD	HL, (CURADDR)	; Address to load to
+	CALL	FAT_READFILE	; Read entire file to address
+
+	RET
+NOFILE:
+	LD	HL, STR_NOFILE
+	CALL	PRINTN
+	RET
+#endlocal
+
+;----------
+; Load and run a program from disk
+CMD_PROGRAM:
+#local
+	INC	HL		; Skip command
+	CALL	SKIPWHITE	; Skip whitespace
+	LD	A, (HL)
+	AND	A
+	JR	Z, NOFILE	; If null terminator then no filename given
+	
+	PUSH	HL		; Save start pointer
+	CALL	EXTRACTARG	; Extract argument (null terminate it)
+	POP	HL		; Restart pointer to string
+	
+	CALL	FAT_SETFILENAME	; Set filename
+	; Change extension to COM
+	LD	A, 'C'
+	LD	(FAT_FILENAME+8), A
+	LD	A, 'O'
+	LD	(FAT_FILENAME+9), A
+	LD	A, 'M'
+	LD	(FAT_FILENAME+10), A
+	; Try and open file
+	CALL	FAT_OPENFILE
+	JR	C, NOFILE	; If failure to open
+	
+	; Read the file into bank 0 (Max program size 32768 bytes)
+	LD	HL, 0x100	; Base address to load to
+	LD	A,  0x08	; Bank to load into (in LOW 4 bits)
+	CALL	FAT_READFILE_BANK	; Read entire file to address
+	
+	;RET	; Do nothing for now
+
+	; Copy needed BIOS code into low 256 bytes
+	LD	HL, 0x0000	; Copy vector table from rom
+	LD	DE, SECTOR	; Use the SECTOR buffer as scratch (it's 512 bytes)
+	LD	BC, 0x100	; 256 bytes
+	LDIR
+	; Now copy from RAM to the programs bank
+	LD	A, 0x08
+	LD	HL, SECTOR
+	LD	DE, 0x0000
+	LD	BC, 0x100
+	CALL	RAM_BANKCOPY	; Copy between banks
+	
+	LD	HL, STR_PREJUMP
+	CALL	PRINTN
+	
+	; Perform bankswitch and call program
+	LD	A, 0x98		; Free RAM in upper, program RAM in lower
+	LD	(CURBANK), A	; Set current bank
+	; Alright, we're leaving forever
+	LD	SP, 0xFFFF
+	JP	BIOSSTART	; Bank switch and start!
+	; We're gone
+	
+NOFILE:
+	LD	HL, STR_NOPROG
+	CALL	PRINTN
+	RET
+#endlocal
+
 
 
 ; Send a device and address to the Teensy
@@ -661,6 +786,10 @@ WAITREAD:
 	RET
 #endlocal
 
+
+
+
+
 CMDTBL:
 	DB '.'	; Change address
 	DB 'E'	; Examine
@@ -669,6 +798,8 @@ CMDTBL:
 	DB 'X'	; Disassemble
 	DB 'T'	; Time
 	DB 'L'	; List root directory
+	DB 'C'  ; Copy file to memory
+	DB 'P'
 	DB 0	; End of table/invalid command
 CMDTBLJ:
 	DW CMD_CHADDR
@@ -678,6 +809,8 @@ CMDTBLJ:
 	DW CMD_DISASS
 	DW CMD_TIME
 	DW CMD_LIST
+	DW CMD_COPYFILE
+	DW CMD_PROGRAM
 	DW CMD_INVAL	; Invalid command
 
 
@@ -692,6 +825,7 @@ DISP_PROMPT:
 	JP	PRINT		; Tail call
 	
 
+#include "macros.asm"	; Assembler macros
 #include "lcd.asm"	; LCD Routines
 #include "delay.asm"	; Delay/sleep routines
 #include "cf.asm"	; CF card routines
@@ -701,9 +835,13 @@ DISP_PROMPT:
 #include "parse.asm"	; String parsing routines
 #include "print.asm"	; Console printing routines
 #include "disass.asm"	; Dissassembler
-;#include "fatfs.asm"	; FAT filesystem
+;#include "fatfs.asm"	; (OLD) FAT filesystem
 #include "fatv2.asm"
+#include "math.asm"	; Math helper routines
 #include "display.asm"	; AVR NTSC display routines
+;#include "serialterm.asm" ; Basic serial terminal
+#include "bios.asm"
+
 ;===============================================================================
 ;===============================================================================
 ; Constants
@@ -795,7 +933,7 @@ STR_LCDBANNER:
 	.ascii "Chartreuse Z80 Booted",0
 	
 STR_BANNER:
-	.ascii "Chartreuse Z80 Monitor v0.1",10,13
+	.ascii "Chartreuse Z80 Monitor v0.3",10,13
 	.ascii "========================================",10,13,0
 
 STR_NL:
@@ -813,6 +951,12 @@ STR_VOLLBL:
 	.ascii "Volume Label: ",0
 STR_VOLID:
 	.ascii "Volume ID: ",0
+STR_NOFILE:
+	.ascii "No such file",0
+STR_NOPROG:
+	.ascii "No such program",0
+STR_PREJUMP:
+	.ascii "Long Jumping to program.",0
 
 ; 3 lines of 80 columns (240b) of graphics mode data
 STR_GRAPHIC_BANNER:
@@ -831,6 +975,100 @@ STR_GRAPHIC_BANNER:
 	DB $32,$19,$0a,$33,$10,$00,$28,$31,$10,$25,$1a,$0a,$30,$05,$22,$26 
 	DB $26,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00 
 	DB $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+	
+;---------------------------------------
+; DO NOT DIRECTLY USE, USE RAM_BANKCOPY
+; Copy data from monitor bank to other bank
+;
+; A - target bank (Only LOW 4 bits matter)
+; BC - # of bytes to copy (Must be < (32kB - DE)
+; HL - This addr	(should be in high bank)
+; DE - Destination addr (assuming destination is in low bank)
+BANKCOPY:
+	.phase	RAM_BANKCOPY
+	AND	$0F		; Make sure bank doesn't contain data for upper
+	OR	$A0		; Make sure upper contains our MONITOR RAM address
+	
+	
+	OUT	(PORT_BANK), A	; Bank Switch! 
+	; Now perform the copy
+	LDIR
+	LD	A, 0xAB		; Swap back to monitor configuration
+	OUT	(PORT_BANK), A	; Bank switch!
+	RET
+BANKCOPYLEN	equ .-RAM_BANKCOPY
+	.dephase
+	
+	
+; Read a byte at an address in the specified bank
+; B - target bank (Both bits matter, if HL >= 0x8000 then we'll use the upper bits)
+; HL - target address
+; Byte in C
+BANKPEEK:
+#local
+	.phase RAM_BANKPEEK
+	LD	A, H		; Check high byte of address
+	AND 	$80		; Check if we want the upper bank
+	JR	Z, LOWER	; High bit not set, use lower bank
+	; Addr is in the upper bank
+	LD	A, H
+	AND	$7F		; Change address to lower
+	LD	H, A
+	LD	A, B
+	RRA
+	RRA
+	RRA
+	RRA			; Move desired bank to low 4 bits
+	LD	B, A
+LOWER:
+	LD	A, B
+	AND	$0F
+	OR	$A0		; Or with Monitor RAM bank (we're here!)
+	OUT	(PORT_BANK), A	; Bank Switch! 
+	LD	A, (HL)		; Read byte
+	LD	C, A		; Save in C
+	LD	A, 0xAB		; Swap back to Monitors bank setup
+	OUT	(PORT_BANK), A	; Bank Switch! 
+	RET
+#endlocal
+BANKPEEKLEN	equ .-RAM_BANKPEEK
+	.dephase
+	
+; Read a byte at an address in the specified bank
+; B - target bank (Both bits matter, if HL >= 0x8000 then we'll use the upper bits)
+; HL - target address
+; C - byte to write
+BANKPOKE:
+#local
+	.phase RAM_BANKPOKE
+	PUSH	HL
+	LD	A, H
+	AND 	$80		; Check if we want the upper bank
+	JR	Z, LOWER
+	; Addr is in the upper bank
+	LD	A, H
+	AND	$7F		; Change address to lower
+	LD	H, A
+	LD	A, B
+	RRA
+	RRA
+	RRA
+	RRA			; Move desired bank to low 4 bits
+	LD	B, A
+LOWER:
+	LD	A, B
+	AND	$0F
+	OR	$A0		; Or with Monitor RAM bank (we're here!)
+	OUT	(PORT_BANK), A	; Bank Switch! 
+	LD	(HL), C		; Write byte to memory
+	LD	A, 0xAB		; Swap back to Monitors bank setup
+	OUT	(PORT_BANK), A	; Bank Switch! 
+	POP	HL
+	RET
+#endlocal
+BANKPOKELEN	equ .-RAM_BANKPOKE
+	.dephase
+	
 ;===============================================================================
 ;===============================================================================
 ; Uninitialized Data in RAM

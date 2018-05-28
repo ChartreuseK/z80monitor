@@ -163,6 +163,28 @@ END:
 	RET
 #endlocal
 
+;----------
+; Extract an argument string
+; Replaces first whitespace character with NULL
+; HL is set to 0 if end of string encountered
+EXTRACTARG:
+#local
+	LD	A, (HL)
+	AND	A
+	JR	Z, ENDN		; Stop on NUL
+	CALL	ISWHITE	
+	JR	Z, END		; Or whitespace
+	INC	HL
+	JR	EXTRACTARG
+ENDN:
+	LD	HL, 0
+	RET
+END:
+	XOR	A		; 0
+	LD	(HL), A		; Null terminate
+	RET
+
+#endlocal
 ;--------
 ; Is character in A whitespace? Sets Z if so
 ISWHITE:

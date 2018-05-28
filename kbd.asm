@@ -175,7 +175,43 @@ LOOP:
 	POP	BC
 	RET
 #endlocal
+
+;---------------------------------------
+; Check if a key is being pressed, return ASCII value, or 0 if none pressed
+KBD_GETKEYNB:
+#local
+	PUSH	BC
+	PUSH	HL
+LOOP:
+	CALL	KBD_GETSCAN
 	
+	LD	BC, 20			; Give some delay for debounce
+	CALL	DELAY	
+	
+	LD	HL, LAST_SCAN		
+	CP	(HL)			; Compare with last scancode
+	JR	Z, END2		; If same as last key ignore
+	
+	LD	(HL), A			; Save as new last key (even if blank)
+	
+	AND	A			; Retest scancode
+	JR	Z, END2			; No key being pressed
+	
+	CALL	SCAN2KEY		; Convert scancode to ASCII
+	
+	POP	HL
+	POP	BC
+	RET
+END2:				; Exit, no key pressed
+	XOR	A
+	POP	HL
+	POP	BC
+	RET
+#endlocal
+
+
+	
+
 	
 	
 	

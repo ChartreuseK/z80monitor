@@ -36,6 +36,14 @@ SERIAL_READ:
 ;---------------------------------------
 
 ;---------------------------------------
+; Check if character is waiting. Z clear if character avail, Z set if not
+SERIAL_POLL:
+	IN	A, (SER_SRA)
+	BIT	0, A
+	RET
+	
+
+;---------------------------------------
 ; Write a character from serial port A, blocking till sent
 SERIAL_WRITE:
 #local
