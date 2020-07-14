@@ -1714,7 +1714,7 @@ TEST2:
 	LD	HL, (IX+ENT_FS)		; Low word
 	LD	BC, (IY)
 	LD	(IX+ENT_FS), BC		; Update size
-	CMP	BC
+	CMP16	BC
 	JR	C, FAIL2		; New size > cur size
 FINISH:
 	LD	HL, SECTOR
