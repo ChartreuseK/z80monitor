@@ -913,7 +913,12 @@ NAMEL:
 	JR	Z, DONE		; Once we hit a null we're done
 	CP	'.'	
 	JR	Z, DOEXT	; Or if we hit a dot
+	CP	'a'
+	JR	C, NOUPPER1
+	CP	'z'+1
+	JR	NC, NOUPPER1
 	AND	0DFH		; Force to uppercase
+NOUPPER1:
 	LD	(DE), A		; Otherwise copy
 	INC	HL
 	INC	DE
@@ -939,7 +944,12 @@ EXTLOOP:
 	LD	A, (HL)
 	AND	A
 	JR	Z, DONE
+	CP	'a'
+	JR	C, NOUPPER2
+	CP	'z'+1
+	JR	NC, NOUPPER2
 	AND	0DFH		; Force to uppercase
+NOUPPER2:
 	LD	(DE), A
 	INC	DE
 	DJNZ	EXTLOOP
@@ -1021,24 +1031,24 @@ FS_CLOSE::
 	
 	; DEBUG: Print out fields
 	; Flags Sector(in cluster) Cluster Dir.ent Size Offset
-	PUSHALL
-	CALL	PRINTI
-	.ascii 10,13,"FS: DEBUG: Struct on close:",10,13,0
-	LD	A, (IX+FS_FLAGS) \ CALL	PRINTBYTE
-	LD	A, ' ' \ CALL PRINTCH
-	LD	A, (IX+FS_SECT) \ CALL PRINTBYTE
-	LD	A, ' ' \ CALL PRINTCH
-	LD	BC, (IX+FS_CLUST) \ CALL PRINTWORD
-	LD	A, ' ' \ CALL PRINTCH
-	LD	BC, (IX+FS_DIRENT) \ CALL PRINTWORD
-	LD	A, ' ' \ CALL PRINTCH
-	LD	BC, (IX+FS_SIZE+2) \ CALL PRINTWORD
-	LD	BC, (IX+FS_SIZE+0) \ CALL PRINTWORD
-	LD	A, ' ' \ CALL PRINTCH
-	LD	BC, (IX+FS_OFFSET+2) \ CALL PRINTWORD
-	LD	BC, (IX+FS_OFFSET+0) \ CALL PRINTWORD
-	CALL	PRINTNL
-	POPALL
+;	PUSHALL
+;	CALL	PRINTI
+;	.ascii 10,13,"FS: DEBUG: Struct on close:",10,13,0
+;	LD	A, (IX+FS_FLAGS) \ CALL	PRINTBYTE
+;	LD	A, ' ' \ CALL PRINTCH
+;	LD	A, (IX+FS_SECT) \ CALL PRINTBYTE
+;	LD	A, ' ' \ CALL PRINTCH
+;	LD	BC, (IX+FS_CLUST) \ CALL PRINTWORD
+;	LD	A, ' ' \ CALL PRINTCH
+;	LD	BC, (IX+FS_DIRENT) \ CALL PRINTWORD
+;	LD	A, ' ' \ CALL PRINTCH
+;	LD	BC, (IX+FS_SIZE+2) \ CALL PRINTWORD
+;	LD	BC, (IX+FS_SIZE+0) \ CALL PRINTWORD
+;	LD	A, ' ' \ CALL PRINTCH
+;	LD	BC, (IX+FS_OFFSET+2) \ CALL PRINTWORD
+;	LD	BC, (IX+FS_OFFSET+0) \ CALL PRINTWORD
+;	CALL	PRINTNL
+;	POPALL
 
 	
 	LD	A, (IX+FS_FLAGS)
@@ -1290,10 +1300,6 @@ FS_WRITE::
 	 JP	Z, FAIL		; File is not open
 	 LD	A, (IX+FS_FLAGS)
 	 
-	 PUSHALL
-	 CALL	PRINTI
-	 .ascii "1",0
-	 POPALL
 	 
 	 ; Set modified flag while we're here.
 	 OR	2h
@@ -1306,10 +1312,7 @@ FS_WRITE::
 	 LD	A, D
 	 OR	E
 	 CALL	Z, EOF_ALLOC	; At start of empty file, allocate
-	 PUSHALL
-	 CALL	PRINTI
-	 .ascii "2",0
-	 POPALL
+	 
 	 CALL	CLUST2LBA
 	 LD	HL, LBA
 	 LD	D, 0
@@ -1513,10 +1516,10 @@ SETEOF:	LD	A, (IX+FS_FLAGS)	; Read in flags
 ;-----------------------------------------------------------------------	
 FS_CREATE::
 #local
-	PUSHALL 
-	CALL	PRINTI
-	.ascii "FS: DEBUG FS_CREATE: ",10,13,0
-	POPALL
+;	PUSHALL 
+;	CALL	PRINTI
+;	.ascii "FS: DEBUG FS_CREATE: ",10,13,0
+;	POPALL
 	PUSH	HL			; Save filename/struct
 	 ; First check if the file already exists
 	 CALL	FAT_FINDFILE		; Search for file
@@ -1535,9 +1538,9 @@ FS_CREATE::
 	
 	PUSH	BC			; (1) Save entries 
 DIRLOOP:
-	PUSH HL
-	LD	A,'.' \ CALL PRINTCH
-	POP HL
+;	PUSH HL
+;	LD	A,'.' \ CALL PRINTCH
+;	POP HL
 	 LD	A, (HL)			; Check first byte of name
 	 CP	0E5h			; Deleted entry
 	 JR	Z, FOUND
@@ -1620,10 +1623,10 @@ EXISTS:
 ; HL - Pointer to FS struct with name filled in
 ;-----------------------------------------------------------------------	
 FS_DELETE::
-	PUSHALL 
-	CALL	PRINTI
-	.ascii "FS: DEBUG FS_DELETE:",10,13,0
-	POPALL
+;	PUSHALL 
+;	CALL	PRINTI
+;	.ascii "FS: DEBUG FS_DELETE:",10,13,0
+;	POPALL
 	CALL	FAT_FINDFILE		; Search for file
 	JP	C, FAIL			; Fail if file not found
 	; HL points to directory entry of file
@@ -1632,10 +1635,10 @@ FS_DELETE::
 	ADD	HL, DE
 	LD	BC, (HL)		; Read in starting cluster
 	
-	PUSH HL \ PUSH BC 
-	CALL PRINTWORD
-	LD	A, "-" \ CALL PRINTCH
-	POP BC \ POP HL
+;	PUSH HL \ PUSH BC 
+;	CALL PRINTWORD
+;	LD	A, "-" \ CALL PRINTCH
+;	POP BC \ POP HL
 	
 	PUSH	BC			; Save cluster
 	LD	(HL), 0	\ INC HL	; Clear starting cluster
@@ -1657,11 +1660,11 @@ CLEARLOOP:
 	CALL	FAT_SET			; previous cluster now marked as free
 	POP	DE			; Next cluster
 
-	PUSH	DE
-	 PUSH	DE \ POP BC
-	 CALL	PRINTWORD
-	 LD	A, '-' \ CALL PRINTCH
-	POP	DE
+;	PUSH	DE
+;	 PUSH	DE \ POP BC
+;	 CALL	PRINTWORD
+;	 LD	A, '-' \ CALL PRINTCH
+;	POP	DE
 	; Now check if we're at the end of the chain
 	LD	A, 0FFh
 	CP	D			; FF - D
@@ -1671,7 +1674,7 @@ CLEARLOOP:
 	CP	E
 	JR	NC, CLEARLOOP		; Cluster < FFF5
 DONE: ; File is empty, no need to do any more.
-	CALL	PRINTNL
+;	CALL	PRINTNL
 	AND	A			
 	RET
 FAIL:
