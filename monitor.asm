@@ -224,36 +224,47 @@ DONE:	LD	A, $0D		; CR
 
 
 
-
-
-;---------------------------------------
+;-----------------------------------------------------------------------
 ; Parse line and handle commands
+;-----------------------------------------------------------------------
+; DM "TIME",0 \ DW CMD_TIME	; Time
 PARSE_LINE:
 #local
 	LD	HL, LBUF
 	CALL 	SKIPWHITE	; Skip leading whitespace to be nice
-	
-	LD	IX, CMDTBL	
-	LD	IY, CMDTBLJ	; Jump table
-NEXTCMP:
-	LD	A, (IX)		; Read in table entry
-	CP	(HL)		; Compare with buffer character
-	JR	Z, MATCH
-	
-	CP	0		; Check if end of table
-	JR	Z, MATCH	; Match if end of table/invalid command
-	
-	INC	IX		; Next character
-	INC 	IY		
-	INC 	IY		; Next function
-	JR	NEXTCMP
-MATCH:
-	LD	BC, (IY)
-	PUSH	BC
+	LD	IX, CMDSTBL
+LOOP:
+	PUSH	HL		; Save start of user str
+	LD	A, (IX)		; Check if at end of table
+	AND	A
+	JR	Z, NOMATCH	; End of table, no match found
+CMP:
+	LD	A, (IX)
+	AND	A
+	JR	Z, MATCH	; End of string in table, matched
+	CP	(HL)
+	INC	IX \ INC HL
+	JR	Z, CMP		; While we match continue comparing
+	; String doesn't match, advance to next entry
+ADVLOOP:
+	LD	A, (IX)
+	INC	IX
+	AND	A
+	JR	NZ, ADVLOOP	; Advance to null terminator
+	INC	IX \ INC IX	; Skip over address
+	POP	HL		; Restore start of user string
+	JR	LOOP		; Keep looping
+MATCH:	; Commands matched and we're on the null terminator of the cmd
+NOMATCH:; And the user string is pointing just after the matched string
+	POP	BC		; Trash saved HL
+	DEC	HL		; We're pointed one too far
+	INC	IX		; Pointing at address of command
+	LD	BC, (IX)	; Command to run
+	PUSH	BC		; Push into return address
 	RET		; Jump into table, index into string in BC
+
 #endlocal
-
-
+;-----------------------------------------------------------------------
 
 
 ;---------------------------------------
@@ -931,37 +942,23 @@ TEENSY_READ:
 	IN	A, (PIO_A)
 	RET
 
-
-
-CMDTBL:
-	DB '.'	; Change address
-	DB 'E'	; Examine
-	DB 'D'	; Deposit
-	DB 'R'	; Run
-	DB 'X'	; Disassemble
-	DB 'T'	; Time
-	DB 'L'	; List root directory
-	DB 'C'  ; Copy file to memory
-	DB 'P'	; Load program to memory and run
-	DB 'M'	; Load program from PC and run
-	DB 'Z'	; TEMP - Create file of specified name
-	DB 'U'	; TEMP - Delete file of specified name
-	DB 0	; End of table/invalid command
-CMDTBLJ:
-	DW CMD_CHADDR
-	DW CMD_EXAMINE
-	DW CMD_DEPOSIT
-	DW CMD_RUN
-	DW CMD_DISASS
-	DW CMD_TIME
-	DW CMD_LIST
-	DW CMD_COPYFILE
-	DW CMD_PROGRAM
-	DW CMD_PC_LOAD
-	DW CMD_TEMP_CFILE
-	DW CMD_TEMP_DFILE
-	DW CMD_INVAL	; Invalid command
-
+; Long string commands table
+; Commands which are prefixes of others must come last
+; Longest match must be tested first
+CMDSTBL:
+	DM ".",0 \ DW CMD_CHADDR	; Change address
+	DM "DEL",0 \ DW CMD_TEMP_DFILE	; Delete file
+	DM "DIR",0 \ DW CMD_LIST	; List root directory
+	DM "DIS",0 \ DW CMD_DISASS	; Disassemble
+	DM "DL",0 \ DW CMD_PROGRAM	; Disk load
+	DM "D",0 \ DW CMD_DEPOSIT	; Deposit
+	DM "E",0 \ DW CMD_EXAMINE	; Examine
+	DM "GO",0 \ DW CMD_RUN		; Run (goto address)
+	DM "NEW",0 \ DW CMD_TEMP_CFILE	; Create new file
+	DM "PL",0 \ DW CMD_PC_LOAD	; PC load
+	DM "READ",0 \ DW CMD_COPYFILE	; Read file into memory
+	DM "TIME",0 \ DW CMD_TIME	; Time
+	DB 0 \ DW CMD_INVAL		; Invalid command (catchall)
 
 ; Display the prompt
 ;  '$ABCD> '
@@ -1084,7 +1081,7 @@ STR_LCDBANNER:
 	.ascii "Chartreuse Z80 Booted",0
 	
 STR_BANNER:
-	.ascii "Chartreuse Z80 Monitor v0.3.2",10,13
+	.ascii "Chartreuse Z80 Monitor v0.3.4",10,13
 	.ascii "========================================",10,13,0
 
 STR_NL:
