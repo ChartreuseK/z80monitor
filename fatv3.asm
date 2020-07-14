@@ -1623,6 +1623,7 @@ EXISTS:
 ; HL - Pointer to FS struct with name filled in
 ;-----------------------------------------------------------------------	
 FS_DELETE::
+#local
 ;	PUSHALL 
 ;	CALL	PRINTI
 ;	.ascii "FS: DEBUG FS_DELETE:",10,13,0
@@ -1680,8 +1681,78 @@ DONE: ; File is empty, no need to do any more.
 FAIL:
 	SCF				; No such file
 	RET
+#endlocal
 ;-----------------------------------------------------------------------	
+
+
+;-----------------------------------------------------------------------
+; Truncate a file to the specified number of bytes
+; HL - Pointer to FS struct with name filled in (must not be open)
+; DE - Pointer to dword (4 byte) length
+;-----------------------------------------------------------------------
+FS_TRUNCATE::
+#local
+	PUSH	DE
+	CALL	FAT_FINDFILE		; Search for file
+	JP	C, FAIL			; Fail if file not found
+	; HL points to directory entry of file
+	PUSH	HL
+	POP	IX			; Directory entry
+	POP	IY			; Pointer to new length
 	
+	LD	HL, (IX+ENT_FS+2)	; High word of file size
+	LD	BC, (IY+2)		; High word of new size
+	LD	(IX+ENT_FS+2), BC	; Update size
+	CMP16	BC
+	JR	C, FAIL2		; New size > cur size
+	JR	Z, TEST2
+	LD	HL, (IX+ENT_FS)		; Low word
+	LD	BC, (IY)
+	LD	(IX+ENT_FS), BC		; Update size
+	JR	FINISH
+TEST2:
+	LD	HL, (IX+ENT_FS)		; Low word
+	LD	BC, (IY)
+	LD	(IX+ENT_FS), BC		; Update size
+	CMP	BC
+	JR	C, FAIL2		; New size > cur size
+FINISH:
+	LD	HL, SECTOR
+	CALL	CF_WRITE		; Write updated directory entry
+	; Now we need to truncate the FAT chain if needed
+	; IY contains a pointer to the new length still
+	LD	DE, (IX+ENT_CLUST)	; Starting cluster of file
+	; First test if the length is 0, in which case we need to 
+	; free the entire file
+	LD	BC, (IY)
+	LD	A, B
+	OR	C
+	LD	BC, (IY+2)
+	OR	B
+	OR	C
+	JR	NZ, NOFIRST
+	; DE is the first cluster, we need to clear the entire chain
+	LD	BC, 0
+	LD	(IX+ENT_CLUST), BC	; Clear starting cluster
+	PUSH	DE			; Save start
+	LD	HL, SECTOR
+	CALL	CF_WRITE		; Update directory entry
+	POP	DE
+	; Clear the chain
+	;UNFINISHED
+NOFIRST:
+	; Follow the chain until size < 0, then clear to end
+	PUSH	DE			; Save current
+	CALL	FAT_GET			; Get next
+	;UNFINISHED
+	
+FAIL:
+	POP	DE
+FAIL2:
+	SCF
+	RET
+#endlocal
+;-----------------------------------------------------------------------	
 
 
 #endlocal
