@@ -996,7 +996,7 @@ DISP_PROMPT:
 #include "print.asm"	; Console printing routines
 #include "disass.asm"	; Dissassembler
 ;#include "fatfs.asm"	; (OLD) FAT filesystem
-#include "fatv2.asm"
+#include "fatv3.asm"
 #include "fs.asm"	; User File routines
 
 #include "math.asm"	; Math helper routines

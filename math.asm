@@ -8,10 +8,14 @@ MATH32_ACCH:	DW	0
 
 #code _ROM
 
+#local
+
+;=======================================================================
+;; Internal helper functions for accumulator
 
 ; Load 32-bit value at (HL) into ACC
 ; Corrupts BC, DE, HL
-LOAD32:
+LOAD_ACC:
 	LD	DE, MATH32_ACCL
 	LDI				; Low byte, low word
 	LDI
@@ -21,7 +25,7 @@ LOAD32:
 
 ; Save 32-bit value from ACC to (DE)
 ; Corrupts BC, DE, HL
-SAVE32:
+SAVE_ACC:
 	LD	HL, MATH32_ACCL
 	LDI
 	LDI
@@ -31,13 +35,14 @@ SAVE32:
 
 ; Clear ACC
 ; Corrupts NONE
-CLEAR32:
+CLEAR_ACC:
 	PUSH	HL
 	LD	HL, 0
 	LD	(MATH32_ACCL), HL
 	LD	(MATH32_ACCH), HL
 	POP	HL
 	RET
+;=======================================================================
 	
 ;--------------------------------------------------------
 ;
@@ -142,9 +147,9 @@ SBC32_16::
 ; Shift LONG (HL) right by 1 (into carry)
 ;   Corrupts NONE
 SRL32::
-	INC	HL
-	INC	HL
-	INC	HL		; Start with most significant byte
+	INC	HL		;+1
+	INC	HL		;+2
+	INC	HL		;+3 Start with most significant byte
 	SRL	(HL)		; Shift top
 	DEC	HL
 	RR	(HL)		; Rotate next
@@ -188,7 +193,7 @@ CHKCLR32::
 ; Multiplies LONG (HL) by LONG (BC), result in LONG (HL)
 ; Upper 32-bits of result discarded
 MUL32::
-	CALL	CLEAR32		; Clear accumulator
+	CALL	CLEAR_ACC		; Clear accumulator
 MUL32_LOOP:
 	CALL	SRL32		; Get next bit of multiplier (HL)
 	PUSH	HL		; Preserve HL
@@ -209,7 +214,7 @@ MUL32_NOADD:
 	JR	NZ, MUL32_LOOP
 	; We're done, multiplier contains no more bits
 	EX	DE, HL		; Address of where to store result
-	CALL	SAVE32		; Save accumulator to result
+	CALL	SAVE_ACC		; Save accumulator to result
 	RET
 ;-----
 
@@ -224,6 +229,15 @@ COPY32::
 	POP	BC
 	RET
 
+; Copy 16-bit value
+; Copy WORD (HL) into WORD (DE)
+COPY16::
+	PUSH	BC
+	LDI
+	LDI
+	POP	BC
+	RET
+	
 ; Copy WORD DE into LONG (HL)
 ; Corrupts DE and HL
 COPY32_16::
@@ -236,3 +250,16 @@ COPY32_16::
 	INC	HL
 	LD	(HL), D
 	RET
+
+CLEAR32::
+	XOR	A
+	LD	(HL), A
+	INC	HL
+	LD	(HL), A
+	INC	HL
+	LD	(HL), A
+	INC	HL
+	LD	(HL), A
+	INC	HL
+	RET
+#endlocal
