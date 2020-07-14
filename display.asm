@@ -34,6 +34,7 @@ ACK2:
 	IN	A, (PIO_C)	; Wait for /ACK
 	AND	1		; C0 = ACK
 	JR	NZ, ACK2
+
 	POP	BC
 	RET
 #endlocal

@@ -4,7 +4,7 @@
 ;  https://k1.spdns.de/Develop/Projects/zasm/Distributions/
 #target rom
 
-CPU_FREQ	equ		4000000		; 4MHz (4000000 = 4MHz)
+CPU_FREQ	equ		8000000		; 8MHz (4000000 = 4MHz)
 
 ; OLDROM: 0x80 Map 1st page of ram to high 32kB, ROM bank 0 to low
 ; NEWROM: 0xA0 Bank 2 to high 32kB, ROM Bank 0 to low
@@ -99,9 +99,9 @@ START:
 	NOP	; Required before CF_INIT otherwise will fail! (Why?!)
 	NOP
 	CALL	CF_INIT
-	;CALL	SERIAL_INIT
+	CALL	SERIAL_INIT
 	LD	A, 0
-	;CALL	SERIAL_WRITE	; Write a null to clear out the buffer
+	CALL	SERIAL_WRITE	; Write a null to clear out the buffer
 	
 	CALL	DELAY_MS
 	
@@ -127,7 +127,6 @@ GRAPHBNR:
 	
 	LD	HL, STR_BANNER
 	CALL	PRINT
-	
 	
 	; Copy bank  code into memory
 	LD	HL, BANKCOPY
@@ -335,7 +334,6 @@ CMD_EXAMINE:
 	
 	; Count in BC
 	LD	HL, (CURADDR)
-	
 MORE:
 	; Check if BC > 16
 	LD	A, B
@@ -602,42 +600,42 @@ CUR:
 CMD_TIME:
 #local	
 	LD	BC, 0x0013	; Day BCD
-	CALL	TEENSY_READ
+	CALL	TEENSY_RDDEV
 	LD	B, A
 	CALL	PRINTBYTE
 	LD	A, '/'
 	CALL	PRINTCH
 	
 	LD	BC, 0x0014	; Month BCD
-	CALL	TEENSY_READ
+	CALL	TEENSY_RDDEV
 	LD	B, A
 	CALL	PRINTBYTE
 	LD	A, '/'
 	CALL	PRINTCH
 	
 	LD	BC, 0x0015	; Year BCD
-	CALL	TEENSY_READ
+	CALL	TEENSY_RDDEV
 	LD	B, A
 	CALL	PRINTBYTE
 	LD	A, ' '
 	CALL	PRINTCH
 	
 	LD	BC, 0x0012	; Read hours (BCD) from RTC 
-	CALL	TEENSY_READ
+	CALL	TEENSY_RDDEV
 	LD	B, A
 	CALL	PRINTBYTE
 	LD	A, ':'
 	CALL	PRINTCH
 	
 	LD	BC, 0x0011	; Read minutes (BCD) from RTC
-	CALL	TEENSY_READ
+	CALL	TEENSY_RDDEV
 	LD	B, A
 	CALL	PRINTBYTE
 	LD	A, ':'
 	CALL	PRINTCH
 	
 	LD	BC, 0x0010	; Read seconds (BCD) from RTC
-	CALL	TEENSY_READ
+	CALL	TEENSY_RDDEV
 	LD	B, A
 	CALL	PRINTBYTE
 	
@@ -746,51 +744,164 @@ NOFILE:
 #endlocal
 
 
+; Load a program from the PC (through teensy) into memory and run
+; Program NAME sent to PC, and NAME.COM is returned if it exists
+CMD_PC_LOAD:
+#local
+	INC	HL		; Skip command
+	CALL	SKIPWHITE	; Skip whitespace
+	LD	A, (HL)
+	AND	A
+	JP	Z, NOFILE	; If null terminator then no filename given
+	
+	PUSH	HL		; Save start pointer
+	CALL	EXTRACTARG	; Extract argument (null terminate it)
+	POP	HL		; Restart pointer to string
+	
+	LD	B, 0x10		; Request for program load
+	CALL	TEENSY_WRITE
 
+	CALL	TEENSY_READ	; Wait for response
+	CP	0x06		; ACK
+	JP	NZ, FAIL
+
+	; Send file name
+FNAME_LOOP:
+	LD	B, (HL)
+	CALL	TEENSY_WRITE
+	INC	HL
+	LD	A, B
+	AND	A
+	JR	NZ, FNAME_LOOP
+
+	CALL	TEENSY_READ	; Wait for response
+	CP	0x06		; ACK
+	JR	NZ, NOFILE
+
+	CALL	TEENSY_READ	; Get # of pages to load
+	AND	A		; If 0 then failure
+	JR	Z, FAIL
+
+	LD	C, A		; # of pages
+	LD	DE, 0x0100	; Load address in D (e used as checksum)
+
+	; We're going to reuse our CF card sector buffer to temporarilly load into here
+READPAGE:
+	LD	HL, SECTOR
+	LD	B, 0		; 256 bytes to copy
+READIN:
+	CALL	TEENSY_READ	; (only corrupts A)
+	LD	(HL), A
+	ADD	A, E
+	LD	E, A		; Store checksum
+	INC	HL
+	DJNZ	READIN
+
+	; Verify checksum
+	LD	B, E
+	CALL	TEENSY_WRITE
+	CALL	TEENSY_READ
+	CP	0x06		; ACK
+	JR	NZ, CHKFAIL
+
+	; Copy data from sector buffer to ram
+	PUSH	BC		; Save # of pages left (C)
+	PUSH	DE		; Save destination address
+	LD	E, 0		; Clear low address (checksum)
+	LD	A,  0x08	; Bank to load into (in LOW 4 bits)
+	LD	BC, 256		; # of bytes to copy
+	LD	HL, SECTOR
+	CALL	RAM_BANKCOPY	; Copy into program bank
+
+	POP	DE
+	INC	D		; Next page of destination
+	POP	BC		; Restore pages left
+	DEC	C
+	JR	NZ, READPAGE
+	; Program is in ram, perform final steps
+	; Copy needed BIOS code into low 256 bytes
+	LD	HL, 0x0000	; Copy vector table from rom
+	LD	DE, SECTOR	; Use the SECTOR buffer as scratch (it's 512 bytes)
+	LD	BC, 0x100	; 256 bytes
+	LDIR
+	; Now copy from RAM to the programs bank
+	LD	A, 0x08
+	LD	HL, SECTOR
+	LD	DE, 0x0000
+	LD	BC, 0x100
+	CALL	RAM_BANKCOPY	; Copy between banks
+
+	LD	HL, STR_PREJUMP
+	CALL	PRINTN
+	
+	; Perform bankswitch and call program
+	LD	A, 0x98		; Free RAM in upper, program RAM in lower
+	LD	(CURBANK), A	; Set current bank
+	; Alright, we're leaving forever
+	LD	SP, 0xFFFF
+	JP	BIOSSTART	; Bank switch and start!
+	; We're gone
+	;RET
+NOFILE:
+	LD	HL, STR_NOPROG
+	CALL	PRINTN
+	RET
+FAIL:
+	LD	HL, STR_HOSTFAIL
+	CALL	PRINTN
+	RET
+CHKFAIL:
+	LD	HL, STR_CHKFAIL
+	CALL	PRINTN
+	RET
+
+#endlocal
 ; Send a device and address to the Teensy
 ; B - device
 ; C - addr
 TEENSY_REQ:
-#local
-WAITSEND:
-	IN	A, (PIO_C)	; Read in status
-	BIT	7, A		; Check if output buffer already full...
-	JR	Z, WAITSEND
-	
-	LD	A, B		; Device
-	OUT	(PIO_A), A	; Store into output buffer
-	
-WAITSEND2:
-	IN	A, (PIO_C)	; Read in status
-	BIT	7, A		; Check if output buffer already full...
-	JR	Z, WAITSEND2
-	
-	LD	A, C		; Address
-	OUT	(PIO_A), A	; Store into output buffer
-	RET
-#endlocal
-
-
-
+	CALL	TEENSY_WRITE	; Send the device first
+	LD	B, C
+	JR	TEENSY_WRITE	; Then the address (tail call)
 
 ; Read a byte from device & addr from the Teensy
 ; B - device
 ; C - addr
 ; Returns:
 ; A - byte val
-TEENSY_READ:
-#local
+TEENSY_RDDEV:
 	CALL	TEENSY_REQ
-WAITREAD:
+	JR	TEENSY_READ
+
+; Write a byte to a device & addr in the Teensy
+; B - Device
+; C - Addr
+; A - Value
+TEENSY_WRDEV:
+	PUSH	AF
+	CALL	TEENSY_REQ
+	POP	AF
+	JR	TEENSY_WRITE
+
+; Send a byte to the teensy
+; B - byte
+TEENSY_WRITE:
+	IN	A, (PIO_C)	; Read in status
+	BIT	7,A		; Check if output buffer full
+	JR	Z, TEENSY_WRITE
+
+	LD	A, B
+	OUT	(PIO_A), A
+	RET
+; Read a byte from the teensy
+; Returns A - byte
+TEENSY_READ:
 	IN	A, (PIO_C)	; Check status
 	BIT	5, A		; Check if input buffer full
-	JR	Z, WAITREAD
+	JR	Z, TEENSY_READ
 	
 	IN	A, (PIO_A)
 	RET
-#endlocal
-
-
 
 
 
@@ -804,6 +915,7 @@ CMDTBL:
 	DB 'L'	; List root directory
 	DB 'C'  ; Copy file to memory
 	DB 'P'	; Load program to memory and run
+	DB 'M'	; Load program from PC and run
 	DB 0	; End of table/invalid command
 CMDTBLJ:
 	DW CMD_CHADDR
@@ -815,6 +927,7 @@ CMDTBLJ:
 	DW CMD_LIST
 	DW CMD_COPYFILE
 	DW CMD_PROGRAM
+	DW CMD_PC_LOAD
 	DW CMD_INVAL	; Invalid command
 
 
@@ -961,6 +1074,10 @@ STR_NOPROG:
 	.ascii "No such program",0
 STR_PREJUMP:
 	.ascii "Long Jumping to program.",0
+STR_HOSTFAIL:
+	.ascii "Host failure while loading",0
+STR_CHKFAIL:
+	.ascii "Checksum failure",0
 
 ; 3 lines of 80 columns (240b) of graphics mode data
 STR_GRAPHIC_BANNER:
@@ -1082,7 +1199,8 @@ BANKPOKELEN	equ .-RAM_BANKPOKE
 #data _RAM
 
 
-
+DISPDEV:	DS 1	; Current display device
+INDEV:		DS 1	; Current input device
 LBUFLEN		equ 80
 LBUF:		DS LBUFLEN+1	; Line buffer (space for null)
 
