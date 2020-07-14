@@ -37,12 +37,12 @@ BIT:
 ; TODO: Optimize, this is way too big...
 	XOR	A			; Modifiers
 	
-	LD	B, 0x02			; Scan Shift R
+	LD	B, 0x20			; Scan Shift L
 	CALL	SCANMOD
 	JR	Z, NOSHIFTR
 	OR	$40			; Shift mask
 NOSHIFTR:
-	LD	B, 0x20			; Scan Shift L
+	LD	B, 0x02			; Scan Shift R
 	CALL	SCANMOD
 	JR	Z, NOSHIFT
 	OR	$40
@@ -101,6 +101,7 @@ SCANLOOP:
 	IN	D, (C)			; Scan the row
 	IN	D, (C)			; Scan the row
 	IN	D, (C)			; Scan the row
+	
 	SUB	1
 	JR	NZ, SCANLOOP
 	
@@ -161,15 +162,17 @@ LOOP:
 	LD	BC, 20			; Give some delay for debounce
 	CALL	DELAY	
 	
+	LD	B, A			; Save original scancode
+	AND	$9F			; Mask off Control and shift
 	LD	HL, LAST_SCAN		
 	CP	(HL)			; Compare with last scancode
-	JR	Z, LOOP		; If same as last key ignore
-	
+	JR	Z, LOOP			; If same as last key ignore
 	LD	(HL), A			; Save as new last key (even if blank)
 	
 	AND	A			; Retest scancode
-	JR	Z, LOOP		; Wait for a keypress
+	JR	Z, LOOP			; Wait for a keypress
 	
+	LD	A, B			; Restore original code
 	CALL	SCAN2KEY		; Convert scancode to ASCII
 	POP	HL
 	POP	BC
@@ -185,7 +188,7 @@ KBD_GETKEYNB:
 LOOP:
 	CALL	KBD_GETSCAN
 	
-	LD	BC, 20			; Give some delay for debounce
+	LD	BC, 4			; Give some delay for debounce
 	CALL	DELAY	
 	
 	LD	HL, LAST_SCAN		

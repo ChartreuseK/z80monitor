@@ -31,6 +31,7 @@ BIOSTBL:
 	DW	B_PUTPX		; 10 - Put pixel [X in H, Y in L, set/reset in B]
 	DW	B_EXIT		; 11 - Exit program to monitor [return code in B]
 	DW	B_DELAY		; 12 - Delay for [HL] milliseconds
+	
 BIOS_MAXCALL	equ ((.-BIOSTBL)/2)
 ;---------------------------------------
 
@@ -218,10 +219,10 @@ B_DLINEMOD:
 	RET
 
 ;---------------------------------------
-; 9 - Write raw character to display, unescaped [in ARG0]
+; 9 - Write raw character to display, escaped [in ARG0]
 B_DISPWRITE:
 	LD	A, (ARG0)
-	CALL	DISP_WRITE
+	CALL	DISP_WRITE_ESC
 	RET
 	
 ;---------------------------------------
@@ -248,7 +249,7 @@ B_EXIT:
 #local
 	LD	A, (ARG0)
 	LD	(RETCODE), A	; Copy return code
-	LD	A, 0xAB		; Monitor Bank
+	LD	A, MONITOR_BANK	; Monitor Bank
 	LD	(CURBANK), A	; Reset CURBANK
 	JP	WARM		; Warm restart, will take care of stack
 #endlocal

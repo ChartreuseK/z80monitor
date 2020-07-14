@@ -4,7 +4,14 @@
 ;  https://k1.spdns.de/Develop/Projects/zasm/Distributions/
 #target rom
 
-CPU_FREQ	equ		4000000		; 4MHz
+CPU_FREQ	equ		4000000		; 4MHz (4000000 = 4MHz)
+
+; OLDROM: 0x80 Map 1st page of ram to high 32kB, ROM bank 0 to low
+; NEWROM: 0xA0 Bank 2 to high 32kB, ROM Bank 0 to low
+; OLD: 0x8B Map 1st page of ram to high 32kB, RAM Bank 3 to low (ROM emulation loader)
+; 0xAB RAM Bank 2 to high 32kB, RAM Bank 3 to low (ROM emulation loader)
+; (RAM BANK 0 and RAM BANK 1 for use of program
+MONITOR_BANK	equ		0xAB		; NEWROM + emu loader
 
 #data _RAM,0xFC00,0x400		; Limit to top 1kB of RAM
 ; Space for BANKCOPY in memory
@@ -17,14 +24,14 @@ RAM_BANKPOKE	DS	BANKPOKELEN
 ;===============================================================================
 ; Reset Vectors
 RESET:
-	LD	A, 0xAB		; Monitor bank setup
+	LD	A, MONITOR_BANK	; Monitor bank setup
 	OUT	(PORT_BANK), A	; Bank switch
 	JP	START
 	
 	; !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	; This code must be preset in every bank that is to be loaded in the low slot
 	ORG	0x08		; RST $08 -- BIOS call
-	LD	A, 0xAB		; Load monitor bank setup
+	LD	A, MONITOR_BANK	; Load monitor bank setup
 	OUT	(PORT_BANK), A	; Bank switch
 	; We're now in the monitor ROM
 	JP	BIOS
@@ -60,10 +67,7 @@ START:
 #local	
 	; First thing we need to do is set up the bank switch register to map
 	; some RAM. By default we have the low 32kB of ROM in both 32kB banks.
-	; OLD: 0x8B Map 1st page of ram to high 32kB, RAM Bank 3 to low (ROM emulation loader)
-	; 0xAB RAM Bank 2 to high 32kB, RAM Bank 3 to low (ROM emulation loader)
-	; (RAM BANK 0 and RAM BANK 1 for use of program
-	LD	A, 0xAB		
+	LD	A, MONITOR_BANK		
 	OUT	(PORT_BANK), A
 
 	LD	SP, 0x0000	; Set stack to top of RAM
@@ -799,7 +803,7 @@ CMDTBL:
 	DB 'T'	; Time
 	DB 'L'	; List root directory
 	DB 'C'  ; Copy file to memory
-	DB 'P'
+	DB 'P'	; Load program to memory and run
 	DB 0	; End of table/invalid command
 CMDTBLJ:
 	DW CMD_CHADDR
@@ -933,7 +937,7 @@ STR_LCDBANNER:
 	.ascii "Chartreuse Z80 Booted",0
 	
 STR_BANNER:
-	.ascii "Chartreuse Z80 Monitor v0.3",10,13
+	.ascii "Chartreuse Z80 Monitor v0.3.1",10,13
 	.ascii "========================================",10,13,0
 
 STR_NL:
@@ -993,13 +997,14 @@ BANKCOPY:
 	OUT	(PORT_BANK), A	; Bank Switch! 
 	; Now perform the copy
 	LDIR
-	LD	A, 0xAB		; Swap back to monitor configuration
+	LD	A, MONITOR_BANK	; Swap back to monitor configuration
 	OUT	(PORT_BANK), A	; Bank switch!
 	RET
 BANKCOPYLEN	equ .-RAM_BANKCOPY
 	.dephase
 	
-	
+;---------------------------------------
+; DO NOT DIRECTLY USE, USE RAM_BANKPEEK
 ; Read a byte at an address in the specified bank
 ; B - target bank (Both bits matter, if HL >= 0x8000 then we'll use the upper bits)
 ; HL - target address
@@ -1027,14 +1032,16 @@ LOWER:
 	OUT	(PORT_BANK), A	; Bank Switch! 
 	LD	A, (HL)		; Read byte
 	LD	C, A		; Save in C
-	LD	A, 0xAB		; Swap back to Monitors bank setup
+	LD	A, MONITOR_BANK	; Swap back to Monitors bank setup
 	OUT	(PORT_BANK), A	; Bank Switch! 
 	RET
 #endlocal
 BANKPEEKLEN	equ .-RAM_BANKPEEK
 	.dephase
 	
-; Read a byte at an address in the specified bank
+;---------------------------------------
+; DO NOT DIRECTLY USE, USE RAM_BANKPOKE
+; Write a byte at an address in the specified bank
 ; B - target bank (Both bits matter, if HL >= 0x8000 then we'll use the upper bits)
 ; HL - target address
 ; C - byte to write
@@ -1061,7 +1068,7 @@ LOWER:
 	OR	$A0		; Or with Monitor RAM bank (we're here!)
 	OUT	(PORT_BANK), A	; Bank Switch! 
 	LD	(HL), C		; Write byte to memory
-	LD	A, 0xAB		; Swap back to Monitors bank setup
+	LD	A, MONITOR_BANK	; Swap back to Monitors bank setup
 	OUT	(PORT_BANK), A	; Bank Switch! 
 	POP	HL
 	RET

@@ -14,6 +14,16 @@ FAT_CURSECT	DS	1	; Current sector within cluster
 FAT_CLUSTLBA 	DS	4	; LBA of current cluster sector
 
 
+;; Open file datastructure for program
+;Structure:
+;FILE_FN		equ	0		; Offset for filename (11)
+;FILE_SIZE	equ	FILE_FN+11	; Current size of file (2)
+;FILE_CUROFF	equ	FILE_SIZE+2	; Current offset in file (4)
+
+FILES:
+
+
+
 ; Calculated values
 FAT_TYPE	DS	1	; Fat type. 12, 16, or 32
 BPB_VER		DS	1	; BPB type. 34 (for 3.4) 40 (for 4.0) or 70 (for 7.0)	
@@ -923,7 +933,6 @@ CLUST2LBA:
 	CALL	COPY32			; Copy starting value
 	
 	
-	
 	; Now multiply by the cluster size
 	LD	A, (FAT_CLUSTSIZ)	; 
 	LD	B, A
@@ -1144,15 +1153,25 @@ LOOP:
 
 	CALL	RAM_BANKCOPY		; Do a bank copy
 	
+	
+	
 	LD	HL, (FAT_CURADDR)
+	
 	LD	DE, 512
 	ADD	HL, DE			; Advance address
 	LD	(FAT_CURADDR), HL	; Save address
 	
+	POP	BC
+	PUSH	BC
+	PUSH	DE
+	CALL	PRINTWORD
+	POP	DE
+	
 	POP	HL			; Restore length
+	
 	AND	A			; Clear carry
 	SBC	HL, DE			; Decrement length left
-	JP	PE, DONE2		; If < 0 then we're done
+	JP	M, DONE2		; If < 0 then we're done
 	PUSH	HL
 	
 	LD	HL, FAT_CURSECT
@@ -1191,5 +1210,302 @@ NEWCLUST:
 DONE:
 	POP	HL			; Remove length from stack
 DONE2:
+	RET
+#endlocal
+
+
+
+
+; Offset in file:
+;  Cluster in chain:   offset / (FAT_CLUSTSIZ * 512)
+;  Offset in cluster:  offset % (FAT_CLUSTSIZ * 512)
+;  Sector in cluster   (offset / 512) % (FAT_CLUSTSIZ)
+
+
+
+F1_FNAME	DS	11	; Filename as space padded 8+3
+F1_LEN		DS	4	; Length of file
+F1_OFFSET	DS	4	; Current offset in file
+F1_CLUSTER	DS	2	; Current cluster 
+F1_SECT		DS	1	; Sector within cluster
+F1_PAD		DS	10	; Pad out to 32 bytes
+
+; FREAD
+;   readcount = 0
+; readloop:
+;   Load current sector for offset
+;   Read up to len bytes from sector (at sector offset), max 512-off bytes.
+;   len -= bytes read; readcount += bytes read
+;   If len > 0 then we need to read the next sector
+;      If current sector in cluster < CLUSTSIZ then increment to next sequential sector, set offset in to 0
+;      If not then we need to advance to the next cluster
+;          Read the sector in the FAT for the current cluster
+;          If not end-of chain then set cluster number to next cluster
+;              Calculate first sector in cluster, set as current sector. offset = 0
+;          If end-of-chain then return readcount, we hit end of file.
+;   Goto readloop
+
+
+; FWRITE
+;   writecount = 0
+; writeloop:
+;    Load current sector for offset
+;    Write up to len bytes to sector (at sector offset), max 512-off bytes
+;    len -= bytes written; writecount += bytes written
+;    Write sector back to disk
+;    If len > 0 then we need to read the next sector
+;        If current sector in cluster < CLUSTSIZ then increment to next sequential sector, set offset in to 0
+;        If not then we need to advance to the next cluster
+;            Read the sector in the FAT for the current cluster
+;            If not end-of-chain then set cluster number to next cluster
+;                Calculate first sector in cluster, set as current sector. offset = 0
+;            Else (hit end of file, need to expand)
+;                Start at first sector of the FAT
+;                Read sector of the FAT, search each entry for a free (0000) entry.
+;                If none, then advance to the next sector (sequential)
+;                    If last sector of the fat, then disk is full. Return early writecount.
+;                If found then calculate its cluster number, change to end of file marker.
+;                Re-read in sector of FAT containing current cluster
+;                Change entry to be the cluster we just found. 
+;                Change current cluster to the new cluster.
+;                Calculate sector of the cluster. offset = 0
+;    Goto writeloop
+
+; FCREATE
+;    Load in root directory
+;    Scan for unused entry location
+;    If not found then return failure, directory full
+;    Set filename and attributes to directory entry
+;    Read RTC to get creation date and time
+;    Write directory sector back to disk
+;    Start at first sector of the FAT
+;    Read sector of the FAT, search each entry for a free (0000) entry.
+;    If none, then advance to the next sector (sequential)
+;    If last sector of the fat, then disk is full.
+;       Re-read in sector with directory entry
+;       Mark entry as unused
+;       Return early, disk full
+;    If found then calculate its cluster number, change to end of file marker.
+;    Re-read in sector with directory entry
+;    Set starting cluster to our found cluster. Length set to 0
+;    Write directory back to disk.
+;    Return success.
+  
+  
+
+
+; FOPEN
+;    Load in root directory
+;    Scan for matching filename
+;    If not found then return failure, no such file
+;    Copy relevant information into file structure
+;    Return success
+
+
+; FDELETE
+;    Load in root directory
+;    Scan for matching filename
+;    If not found then return failure, no such file
+;    Copy starting cluster of file
+;    Wipe entry (we're not supporting any kind of 'undelete' since it doesn't work with fragmented files)
+;    Set current cluster entry to starting cluster of file
+;  delloop:
+;    Load in sector of FAT containing current cluster entry
+;    Read in next cluster value and save
+;    Set next cluster value to free (0000)
+;    Write sector back to disk
+;    If next cluste value wasn't end of file, then goto delloop
+
+
+; FTRUNCALE
+;    Load in root directory
+;    Scan for matching filename
+;    If not found then return failure, no such file
+;    Copy starting cluster of file.
+;    Set length to new length
+;    clen = Calculate number of clusters required for new length. (length / (512 * CLUSTSIZ))
+;    If clen = 0, then clen = 1
+;    Set current cluster entry to starting cluster of file
+;  loop:
+;    Load in sector of FAT contiaining current cluster entry
+;    Decrement clen
+;    If 0 then no more clusters needed
+;        Set current cluster entry to value of next cluster
+;        If end of file then no need to truncate, return success
+;        Set next cluster entry to EOF. 
+;        Write fat sector to disk
+;      truncloop:
+;        Load in sector of FAT containing current cluster entry
+;        Set current cluster entry to value of next cluster
+;        Set next cluster entry to free (0000)
+;        Write fat sector to disk
+;        If next cluster entry was EOF, then we're done, return success
+;        goto truncloop
+;    Set current cluster entry to value of next cluster
+;    If next cluster is EOF, then we need to expand the file
+;      expandloop:
+;        Search FAT for free cluster.
+;        If none found, 
+;          ... (Do we truncate to original size, or indicate new size???)
+;          then return failure, disk full
+;        Re-read in sector of FAT containing current cluster entry
+;        Set next entry to found cluster.
+;        Write FAT sector to disk
+;        Set current cluster entry to value of next cluster
+;        Load in sector of FAT containing current cluster entry
+;        Decrement clen
+;        If 0 then no more clusters needed
+;            Set next pointer to EOF.
+;            Write FAT sector to disk.
+;            Return success
+;        goto expandloop
+;    goto loop
+;    
+;    
+
+
+; FINDFREECLUS
+;  Find first free cluster in FAT
+
+
+#data _RAM
+SECTLEFT	DS	2
+FREEBYTES	DS	4
+#code _ROM
+; Find first free cluster
+; Cluster found in DE, 0 if disk full
+FINDFREECLUS:
+#local
+	LD	HL, FAT_LBA		; First sector of first FAT
+	LD	DE, LBA
+	CALL	COPY32
+	
+	CALL	CF_READ			; Read in sector
+	
+	LD	HL, SECTOR		; Point to start
+	LD	BC, SECTOR+512		; End of current sector pointer
+	
+	LD	DE, (FAT_SECTFAT32)	; Read # of sectors in FAT (FAT16 only)
+	LD	(SECTLEFT), DE		; 
+	
+	LD	DE, 2			; Current cluster # (table starts at 2)
+	
+	; Loop through sector looking for a free cluster
+LOOPSECT:
+	LD	A, (HL)			; First byte
+	INC	HL
+	LD	B, (HL)			; Second byte
+	INC	HL
+	OR	B			; Check if was 0
+	JR	Z, FOUND
+	INC	DE			; Next cluster #
+	CMP16	BC			; Check if beyond end of sector
+	JR	C, LOOPSECT		; If not loop till end of sector
+	; Check if there's sectors left
+	PUSH	DE			; Save cluster #
+	
+	LD	DE, (SECTLEFT)
+	DEC	DE
+	LD	(SECTLEFT), DE		; # of sectors left
+	
+	LD	A, D
+	OR	E	
+	JR	Z, NOFREE		; If no more sectors left, then disk is full
+	
+	; We need to read the next sector
+	LD	HL, LBA
+	LD	DE, 1
+	CALL	ADD32_16		; Next sequential sector
+	CALL	CF_READ			; Read next sector
+	POP	DE			; Restore cluster #
+	LD	BC, SECTOR+512		; End of current sector pointer
+	JR	LOOPSECT		; Loop till free sector found
+NOFREE:
+	POP	DE			; Restore cluster #	
+	LD	DE, 0			; Set # to 0 to indicate disk is full
+FOUND:	
+	; Cluster # in DE, non-zero for success
+	RET
+#endlocal
+
+
+; Calculate free disk space
+; 
+FAT_DISKFREE:
+#local
+	LD	DE, 0
+	LD	HL, FREEBYTES
+	CALL	COPY32_16		; Clear free count
+	
+	LD	HL, FAT_LBA		; First sector of first FAT
+	LD	DE, LBA
+	CALL	COPY32
+	
+	CALL	CF_READ			; Read in sector
+	
+	LD	HL, SECTOR		; Point to start
+	LD	BC, SECTOR+512		; End of current sector pointer
+	
+	LD	DE, (FAT_SECTFAT32)	; Read # of sectors in FAT (FAT16 only)
+	LD	(SECTLEFT), DE		; 
+	
+	LD	DE, 0			; # of free clusters
+	
+	; Loop through sector looking for a free cluster
+LOOPSECT:
+	LD	A, (HL)			; First byte
+	INC	HL
+	LD	B, (HL)			; Second byte
+	INC	HL
+	OR	B			; Check if was 0
+	JR	Z, NEXT
+	INC	DE			; Increment free cluster count
+NEXT:
+	CMP16	BC			; Check if beyond end of sector
+	JR	C, LOOPSECT		; If not loop till end of sector
+	; Check if there's sectors left
+	PUSH	DE			; Save cluster #
+	
+	LD	DE, (SECTLEFT)
+	DEC	DE
+	LD	(SECTLEFT), DE		; # of sectors left
+	
+	LD	A, D
+	OR	E	
+	JR	Z, DONE			; If no more sectors left, then we've got the count
+	
+	; We need to read the next sector
+	LD	HL, LBA
+	LD	DE, 1
+	CALL	ADD32_16		; Next sequential sector
+	CALL	CF_READ			; Read next sector
+	POP	DE			; Restore cluster #
+	LD	BC, SECTOR+512		; End of current sector pointer
+	
+	JR	LOOPSECT		; Loop till free sector found
+DONE:
+	POP	DE			; Restore free cluster count
+	; Multiple # of clusters by the size of a cluster
+	
+	;LD	B, (FAT_CLUSTSIZ)	; # of sectors in a cluster
+	; Multiply cluster count by # of sectors in a cluster
+MULLOOP:
+	LD	HL, FREEBYTES
+	CALL	ADD32_16		; Add cluster count
+	DJNZ	MULLOOP
+	; We now have number of sectors free, multipy by 512 (bytes in a sector
+	LD	HL, FREEBYTES
+	LD	DE, FREEBYTES
+	CALL	ADD32			; Multiply by 2
+	; Multiply by 256 by shifting a whole byte
+	LD	A, (FREEBYTES+2)
+	LD	(FREEBYTES+3), A	; Shift high byte
+	LD	A, (FREEBYTES+2)
+	LD	(FREEBYTES+3), A	; Shift mid byte
+	LD	A, (FREEBYTES+2)
+	LD	(FREEBYTES+3), A	; Shift low byte
+	XOR	A
+	LD	(FREEBYTES+3), A	; Clear low byte
+	; Free bytes is now the number of free bytes
 	RET
 #endlocal

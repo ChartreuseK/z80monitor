@@ -94,7 +94,7 @@ NOADJ:
 ; Print a character to console
 ; A - ch
 PRINTCH:
-	JP	DISP_WRITE_ESC	; Tail Call
+	JP	DISP_WRITE	; Tail Call
 	;JP	SERIAL_WRITE	; Tail call
 
 ;--------
