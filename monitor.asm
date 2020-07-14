@@ -13,13 +13,17 @@ CPU_FREQ	equ		8000000		; 8MHz (4000000 = 4MHz)
 ; (RAM BANK 0 and RAM BANK 1 for use of program
 MONITOR_BANK	equ		0xAB		; NEWROM + emu loader
 
-#data _RAM,0xFC00,0x400		; Limit to top 1kB of RAM
+#data _RAM,0xF800,0x800		; Limit to top 2kB of RAM
 ; Space for BANKCOPY in memory
 RAM_BANKCOPY	DS	BANKCOPYLEN
 RAM_BANKPEEK	DS	BANKPEEKLEN
 RAM_BANKPOKE	DS	BANKPOKELEN
+
+MON_FS		DS	FSLEN	; FS stuct for monitor use
+
 .align 2
 #code _ROM,0x0000,0x8000	
+#include "macros.asm"	; Assembler macros
 ;===============================================================================
 ;===============================================================================
 ; Reset Vectors
@@ -141,19 +145,14 @@ GRAPHBNR:
 	LD	HL, STR_NODRIVE
 	CALL	PRINTN
 	
-	
 	JR	CMD_LOOP
 DRVPRES:
 	LD	HL, STR_DRIVE
 	CALL	PRINTN
-	
-	LD	HL, 0
-	ADD	HL, SP
-	LD	BC, HL
-	CALL	PRINTWORD
-	
-	
 	CALL	FAT_INIT
+	
+
+	
 WARM::
 	LD	SP, 0x0000	; Reset stack on warm restart
 	CALL	PRINTNL
@@ -170,58 +169,6 @@ HALT:
 	JP	HALT
 #endlocal
 
-; A bunch of opcodes for testing the disassembler
-DISTEST:
-	LD	A, 0
-	LD	B, 1
-	LD	HL, $1234
-	LD	IX, $5678
-	LD	IY, $9ABC
-	LD	A, (HL)
-	LD	A, (IX+1)
-	LD	A, (IY-$71)
-	RR	(HL)
-	RL	A
-	LD	(HL), BC
-	
-	
-	
-	LD	(IY-$12), BC
-	
-	LD	(IX), DE
-	
-	INC	IX
-	DEC	IY
-	INC	IXL
-	DEC	IXH
-	LD	IXH, $21
-	NOP
-	NOP
-	RR	(IX)	; DDCB prefix instruction
-	RL	(IY)	; FDCB prefix instruction
-	NOP
-	NOP
-	DB	$FD
-	DB	$DD
-	RETI
-	OUT	(C), A
-	IN	A, (C)
-	DB	$ED,$70 ;0160 - IN (C)
-	OUT	(C), 0
-	LDI
-	CPD
-	INIR
-	OTDR
-TEST:
-	SET 	5, (IX+$12), A	; DDCB illegal opcode
-	RR 	(IY-$62), E	; FDCB legal? opcode
-	BIT 	3, (IY+$7E)	; FDCB legal opcode
-	DB	$DD,$CB,$00,$7B	; IX - prefix for BIT should be normal (BIT 7, E)
-	NOP
-	
-	JR	TEST
-	JP	PO, TEST
-	JR	NC, TEST
 ;---------------------------------------
 ; Get a line of user input into LBUF
 GET_LINE:
@@ -681,6 +628,7 @@ NOFILE:
 	RET
 #endlocal
 
+
 ;----------
 ; Load and run a program from disk
 CMD_PROGRAM:
@@ -689,28 +637,36 @@ CMD_PROGRAM:
 	CALL	SKIPWHITE	; Skip whitespace
 	LD	A, (HL)
 	AND	A
-	JR	Z, NOFILE	; If null terminator then no filename given
+	JP	Z, NOFILE	; If null terminator then no filename given
 	
 	PUSH	HL		; Save start pointer
 	CALL	EXTRACTARG	; Extract argument (null terminate it)
 	POP	HL		; Restart pointer to string
 	
-	CALL	FAT_SETFILENAME	; Set filename
-	; Change extension to COM
+	LD	DE, MON_FS
+	CALL	FS_SETFILENAME
+	; Change extension to COM (Kind of cheating)
 	LD	A, 'C'
-	LD	(FAT_FILENAME+8), A
+	LD	(MON_FS+FS_FNAME+8), A
 	LD	A, 'O'
-	LD	(FAT_FILENAME+9), A
+	LD	(MON_FS+FS_FNAME+9), A
 	LD	A, 'M'
-	LD	(FAT_FILENAME+10), A
+	LD	(MON_FS+FS_FNAME+10), A
 	; Try and open file
-	CALL	FAT_OPENFILE
+	LD	HL, MON_FS
+	CALL	FS_OPEN
 	JR	C, NOFILE	; If failure to open
+
 	
+	
+
 	; Read the file into bank 0 (Max program size 32768 bytes)
 	LD	HL, 0x100	; Base address to load to
-	LD	A,  0x08	; Bank to load into (in LOW 4 bits)
-	CALL	FAT_READFILE_BANK	; Read entire file to address
+	LD	C,  0x08	; Bank to load into (in LOW 4 bits)
+	LD	IX, MON_FS
+	CALL	FS_READFILE	; Read entire file to address
+	
+	
 	
 	;RET	; Do nothing for now
 
@@ -726,8 +682,10 @@ CMD_PROGRAM:
 	LD	BC, 0x100
 	CALL	RAM_BANKCOPY	; Copy between banks
 	
+	CALL	PRINTNL
 	LD	HL, STR_PREJUMP
 	CALL	PRINTN
+
 	
 	; Perform bankswitch and call program
 	LD	A, 0x98		; Free RAM in upper, program RAM in lower
@@ -985,7 +943,7 @@ DISP_PROMPT:
 	JP	PRINT		; Tail call
 	
 
-#include "macros.asm"	; Assembler macros
+
 #include "lcd.asm"	; LCD Routines
 #include "delay.asm"	; Delay/sleep routines
 #include "cf.asm"	; CF card routines
@@ -997,8 +955,8 @@ DISP_PROMPT:
 #include "disass.asm"	; Dissassembler
 ;#include "fatfs.asm"	; (OLD) FAT filesystem
 #include "fatv3.asm"
-#include "fs.asm"	; User File routines
-
+;;;#include "fs.asm"	; User File routines
+#include "util.asm"	; Utility functions
 #include "math.asm"	; Math helper routines
 #include "display.asm"	; AVR NTSC display routines
 ;#include "serialterm.asm" ; Basic serial terminal
@@ -1150,6 +1108,10 @@ STR_GRAPHIC_BANNER:
 ; BC - # of bytes to copy (Must be < (32kB - DE)
 ; HL - This addr	(should be in high bank)
 ; DE - Destination addr (assuming destination is in low bank)
+;;
+;
+; If HL is in low bank, and DE is in high bank, then this should
+; work as a copy from banked memory to kernel memory
 BANKCOPY:
 	.phase	RAM_BANKCOPY
 	AND	$0F		; Make sure bank doesn't contain data for upper
