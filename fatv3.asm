@@ -10,10 +10,6 @@
 ;-----------------------------------------------------------------------
 #data _RAM
 
-FAT_FILENAME::	
-	DS	11	; Current open file with extension
-
-
 BPBVER		DS 1	; BPB version, 70, 40, or 34 
 ; Bios Parameter Block - Info about the filesystem
 BPB:
@@ -54,6 +50,9 @@ FAT32_CLUSTER_MAX equ 0FFFFFF6h
 BPB70_FSTYPE equ 0x52	; Offset to FSTYPE in boot sector
 BPB40_FSTYPE equ 0x36
 
+FATDIR_START_CLUSTER equ 1Ah
+FATDIR_SIZE 	     equ 1Ch
+
 DIRENTSIZ	EQU	32
 
 
@@ -74,10 +73,12 @@ FS_FLAGS::	EQU	FS_DIRENT+2	; 1  Flags:
   ; 10
   ; 08
   ; 04
-  ; 02
+  ; 02 - Modified. File has been written to (size may have changed)
   ; 01 - Open. File is opened and safe to use
-FS_RESERVED	EQU	FS_FLAGS+1	; Padding for future expansion 
-FSLEN::		EQU	FS_RESERVED+7 ; currently 17 bytes, pad to 24 for future use
+FS_SIZE::	EQU	FS_FLAGS+1	; 4 - Size of file (in bytes)
+FS_OFFSET::	EQU	FS_SIZE+4	; 4 - Current offset in bytes (For keeping track of length)
+FS_RESERVED	EQU	FS_OFFSET+4	; Padding for future expansion 
+FSLEN::		EQU	FS_RESERVED+7 ; currently 25 bytes, pad to 32 for future use
 
 ;-----------------------------------------------------------------------
 
@@ -178,12 +179,7 @@ CONT1:
 	; Sector count has been enlarged
 CONT2:
 	CALL	PRINTI
-	.ascii "FAT: Sector size: $",0
-	LD	BC, (BPB_SECTSIZE)
-	CALL	PRINTWORD
-	CALL	PRINTNL
-	CALL	PRINTI
-	.ascii "FAT: Sectors per cluster: $",0
+	.ascii "FAT: Sectors per cluster:           $",0
 	LD	A, (BPB_CLUSTSIZE) \ CALL PRINTBYTE
 	CALL	PRINTNL
 	
@@ -235,8 +231,7 @@ MULDIRSIZ:
 	LD	DE, (BPB_RESVSECT)
 	CALL	COPY32_16	
 	CALL 	PRINTI
-	.ascii "FAT: Reserved sectors:        $", 0
-	LD	BC, (FAT_DATASTART+2) \ CALL PRINTWORD
+	.ascii "FAT: Reserved sectors:            $", 0
 	LD	BC, (FAT_DATASTART+0) \ CALL PRINTWORD
 	CALL	PRINTNL
 		
@@ -470,7 +465,7 @@ DONE:
 PRINTENT:
 #local
 ENT_ATTR	equ	11		; Attribute byte
-ENT_FS		equ	28
+ENT_FS		equ	0x1C		; Size of file (DWORD)
 	
 	LD	A, (HL)			; First byte of filename
 	AND	A
@@ -754,14 +749,16 @@ NAMECHECK:
 	
 	; Filename matches, we have our file entry
 	POP	IX 			; (3) Pointer to start of file name
+	POP	HL			; (2) HL points to the directory entry
+	POP	BC			; (1) Counter
+	; Need to invert counter
 	; Store index into BC
+	PUSH	HL			; (1) Dir pointer
 	LD	HL, (BPB_DIRENTS)
 	AND	A			; Clear carry
 	SBC	HL, BC			; Get index
 	EX	DE, HL			; Save in DE
-	POP	HL			; (2) HL points to the directory entry
-	POP	BC			; (1) Counter
-	
+	POP	HL			; (1) Dir pointer
 	AND	A			; Clear carry
 	RET				; File found!
 NOTFILE:	
@@ -951,7 +948,7 @@ DONE:
 ;-----------------------------------------------------------------------
 FS_OPEN::
 #local
-FATDIR_START_CLUSTER equ 1Ah
+
 	PUSH	HL			; Save our pointer
 	 ; Search for the file in the directory
 	 CALL	FAT_FINDFILE		; Search for file
@@ -959,15 +956,28 @@ FATDIR_START_CLUSTER equ 1Ah
 	 ; HL points to directory entry, DE is index
 	POP	IX			; Restore FS struct into IX
 	
-	
 	LD	(IX+FS_DIRENT), DE	; Save directory index
-	LD	(IX+FS_SECT), 0		; Clear sector 
+	LD	A, 0
+	LD	(IX+FS_SECT), A		; Clear sector 
+	LD	(IX+FS_OFFSET+0),A
+	LD	(IX+FS_OFFSET+1),A
+	LD	(IX+FS_OFFSET+2),A
+	LD	(IX+FS_OFFSET+3),A	; Clear offset within file
 	LD	DE, FATDIR_START_CLUSTER
 	ADD	HL, DE
-	LD	DE, (HL)
+	LD	E, (HL) \ INC	HL
+	LD	D, (HL) \ INC	HL
 	LD	(IX+FS_CLUST), DE	; Start cluster
+	; Size is right after the cluster	
+	PUSH	DE ; Save start cluster
+	 LD	E, (HL)	\ INC HL	; Low word of file size
+	 LD	D, (HL) \ INC HL
+	 LD	(IX+FS_SIZE), DE
+	 LD	E, (HL)	\ INC HL	; high word of file size
+	 LD	D, (HL) \ INC HL
+	 LD	(IX+FS_SIZE+2), DE
+	POP	DE ; Start cluster back into DE
 	PUSH	IX			; Save pointer
-	 ; Finally flags
 	 ; Check if end of file for flags
 	 LD	A, D
 	 OR	E			; Check if file is empty	
@@ -979,7 +989,6 @@ ISEND:
 FLAG1:
 	 LD	(IX+FS_FLAGS), A
 	POP	HL			; Restore pointer for caller
-	
 	RET
 FAIL:
 	POP	HL
@@ -993,15 +1002,142 @@ FAIL:
 ; HL - Pointer to FS struct
 ;-----------------------------------------------------------------------
 FS_CLOSE::
+#local
 	PUSH	HL
 	POP	IX
-	LD	A, 0
-	LD	(IX+FS_FLAGS), A
-	; Not much to do here for now, just mark the file as closed
-	; and nothing else
+	BIT	0, (IX+FS_FLAGS)
+	RET	Z			; File is already closed ignore
+	
+	; DEBUG: Print out fields
+	; Flags Sector(in cluster) Cluster Dir.ent Size Offset
+	PUSHALL
+	CALL	PRINTI
+	.ascii 10,13,"FS: DEBUG: Struct on close:",10,13,0
+	LD	A, (IX+FS_FLAGS) \ CALL	PRINTBYTE
+	LD	A, ' ' \ CALL PRINTCH
+	LD	A, (IX+FS_SECT) \ CALL PRINTBYTE
+	LD	A, ' ' \ CALL PRINTCH
+	LD	BC, (IX+FS_CLUST) \ CALL PRINTWORD
+	LD	A, ' ' \ CALL PRINTCH
+	LD	BC, (IX+FS_DIRENT) \ CALL PRINTWORD
+	LD	A, ' ' \ CALL PRINTCH
+	LD	BC, (IX+FS_SIZE+2) \ CALL PRINTWORD
+	LD	BC, (IX+FS_SIZE+0) \ CALL PRINTWORD
+	LD	A, ' ' \ CALL PRINTCH
+	LD	BC, (IX+FS_OFFSET+2) \ CALL PRINTWORD
+	LD	BC, (IX+FS_OFFSET+0) \ CALL PRINTWORD
+	CALL	PRINTNL
+	POPALL
+
+	
+	LD	A, (IX+FS_FLAGS)
+	AND	0FEh			; Mark file as closed
+	LD	(IX+FS_FLAGS), A	
+	AND	02h			; Check if modified
+	RET	Z			; File is clean, don't update dir
+	; File has been modified!
+	; We need to return to the directory entry and update the size
+	CALL	FILE_GET_DIRENT
+	LD	DE, FATDIR_SIZE
+	ADD	HL, DE
+	LD	BC, (IX+FS_SIZE+0)
+	LD	(HL), C \ INC HL
+	LD	(HL), B \ INC HL
+	LD	BC, (IX+FS_SIZE+2)
+	LD	(HL), C \ INC HL
+	LD	(HL), B \ INC HL
+	; We could also update the modified time here if desired
+	LD	HL, SECTOR
+	CALL	CF_WRITE		; Write updated directory to disk
+	RET
+#endlocal
+;-----------------------------------------------------------------------
+
+
+
+;-----------------------------------------------------------------------
+; Add amount DE to FS_OFFSET field in FS struct (HL)
+;-----------------------------------------------------------------------
+ADD_OFFSET:
+	LD	BC, FS_OFFSET
+	ADD	HL, BC
+	CALL	ADD32_16
+	RET	
+;-----------------------------------------------------------------------
+
+
+;-----------------------------------------------------------------------
+; Compare FS_OFFSET field with FS_SIZE in FS struct (IX)
+;-----------------------------------------------------------------------
+CMP_OFFSET_SIZE:
+	LD	HL, (IX+FS_SIZE+2)	; High word first
+	LD	DE, (IX+FS_OFFSET+2)
+	CMP16	DE
+	RET	C			; SIZE < OFFSET
+	RET	NZ 			; SIZE > OFFSET
+	; High bytes match, need to check low
+	LD	HL, (IX+FS_SIZE+0)	; High word first
+	LD	DE, (IX+FS_OFFSET+0)
+	CMP16	DE
+	RET				
+	; C set if SIZE < OFFSET
+	; Z set if SIZE == OFFSET
+	; NC & !Z if SIZE > OFFSET
+;-----------------------------------------------------------------------
+
+;-----------------------------------------------------------------------
+; Copy FS_OFFSET field into FS_SIZE, file has been expanded
+;-----------------------------------------------------------------------
+OFFSET_TO_SIZE:
+	LD	HL, (IX+FS_OFFSET+2)
+	LD	(IX+FS_SIZE+2), HL
+	LD	HL, (IX+FS_OFFSET+0)
+	LD	(IX+FS_SIZE+0), HL
 	RET
 ;-----------------------------------------------------------------------
 
+
+;-----------------------------------------------------------------------	
+; Reaquire the directory entry for a open file
+; IX points to file structure
+; Returns:
+;  HL - pointer to directory entry within SECTOR
+;  LBA/SECTOR - pointing to sector of directory entry so we can
+;   simply write back
+;-----------------------------------------------------------------------
+FILE_GET_DIRENT:
+#local
+	LD	HL, FAT_ROOTLBA
+	LD	DE, LBA
+	CALL	COPY32
+	
+	LD	E, (IX+FS_DIRENT)
+	LD	D, (IX+FS_DIRENT+1)
+	; Directory entries are 32 bytes, 16 (4 bits) fit per 512B sector
+	; Get sector 
+	LD	BC, 0			; Offset in sector
+	SRL	D \ RR	E \ RR C
+	SRL	D \ RR	E \ RR C
+	SRL	D \ RR	E \ RR C
+	SRL	D \ RR	E \ RR C	; >> 4, DE now contains the sector
+	; And BC contains the entry within the sector * 16
+	PUSH	BC	
+	
+	; DE is the sector offset
+	LD	HL, LBA
+	CALL	ADD32_16		; Add to root directory lba
+	
+	LD	HL, SECTOR
+	CALL	CF_READ			; Read in sector in directory
+	
+	LD	HL, SECTOR
+	POP	BC			; 
+	ADD	HL, BC			; Offset in sector / 2
+	ADD	HL, BC			; Offset in sector
+	; HL now points at the directory entry, LBA at the sector it's in
+	RET
+#endlocal
+;-----------------------------------------------------------------------
 
 ; BIOS is free to handle the far pointers more gracefully and normallize
 ; then before calling these functions that use them
@@ -1029,7 +1165,6 @@ FS_READ::
 	 AND 	080h		; Are we at the end already?
 	 JP	NZ, EOF
 	 ; Okay try and read in the next sector
-	 ;INC	(IX+FS_SECT)	; Next sector within cluster
 	 LD	A, (BPB_CLUSTSIZE)
 	 CP	(IX+FS_SECT)	; 
 	 JP	Z, NEWCLUST	; We need a new cluster
@@ -1069,6 +1204,14 @@ SEQCLUST:
 	CALL	RAM_BANKCOPY		; Do a bank copy
 	POP	IX
 	
+	; Add to offset the amount we read
+	PUSH	IX \ POP HL
+	LD	DE, 512			; Amount of bytes read
+	CALL	ADD_OFFSET
+	
+	; Check if we're past the file size
+	CALL	CMP_OFFSET_SIZE
+	JR	C, EOFMARK2		; We're at the end of the file
 	
 	 ; Increment current sector
 	INC	(IX+FS_SECT)
@@ -1084,19 +1227,26 @@ SEQCLUST:
 	JR	Z, EOFMARK2		; No more data (or bad block in file/fat error)
 	LD	(IX+FS_CLUST), DE	; Next cluster in chain
 	LD	(IX+FS_SECT), 0		; Start of sector within cluster
-
 NOINCFIX:
 	; And we're done
 	LD	A, 1
 	AND	A			; Clear carry
 	RET
 EOFMARK2:
+	PUSHALL
+	CALL	PRINTI
+	.ascii "2",10,13,0
+	POPALL
 	LD	A, (IX+FS_FLAGS)
 	OR	080h
 	LD	(IX+FS_FLAGS), A
 	; Don't advance clust or sect
 	JR	NOINCFIX
 EOFMARK:
+	PUSHALL
+	CALL	PRINTI
+	.ascii "1",10,13,0
+	POPALL
 	LD	A, (IX+FS_FLAGS)
 	OR	080h
 	LD	(IX+FS_FLAGS), A
@@ -1135,6 +1285,9 @@ FS_WRITE::
 	 AND	1
 	 JP	Z, FAIL		; File is not open
 	 LD	A, (IX+FS_FLAGS)
+	 ; Set modified flag while we're here.
+	 OR	2h
+	 LD	(IX+FS_FLAGS), A	; Modified set since we're writing
 	 AND 	080h		; Are we at the end already?
 	 CALL	NZ, EOF_ALLOC	; Okay we'll need to allocate a new cluster
 
@@ -1145,6 +1298,8 @@ FS_WRITE::
 	 LD	D, 0
 	 LD	E, (IX+FS_SECT)
 	 CALL	ADD32_16
+	 
+	 
 	 ; Copy data from banked address to sector buffer
 	POP 	BC
 	POP	HL			; Restore far pointer (src)
@@ -1155,6 +1310,15 @@ FS_WRITE::
 	CALL	RAM_BANKCOPY		; Do a bank copy 
 	LD	HL, SECTOR
 	CALL	CF_WRITE		; Write data to disk
+	
+	; Add to offset the amount we wrote
+	PUSH	IX \ POP HL
+	LD	DE, 512			; Amount of bytes written
+	CALL	ADD_OFFSET
+	
+	; Check if we're past the file size (and need to update it)
+	CALL	CMP_OFFSET_SIZE
+	CALL	C, OFFSET_TO_SIZE	; If so offset is our new size
 	
 	; Okay try and point to next sector 
 	INC	(IX+FS_SECT)	; Next sector within cluster
@@ -1229,15 +1393,17 @@ FAIL2:	POP	BC
 ; C - (low nybble only) bank pointer
 ;-----------------------------------------------------------------------
 FS_READFILE::
+#local
 	; Assume file is open an re-wound to the start
 LOOP:
 	PUSH	IX
 	PUSH	BC
 	PUSH	HL
+	
 	CALL	FS_READ
 	JR	C, RDFAIL
-	CALL	PRINTI
-	.ascii ".",0
+	LD	A, '.'
+	CALL	PRINTCH
 	POP	HL
 	POP	BC
 	POP	IX
@@ -1262,15 +1428,47 @@ RDFAIL:
 ERROR:	
 	SCF
 	RET
+#endlocal
 ;-----------------------------------------------------------------------
 
 
 ;-----------------------------------------------------------------------
-; Rewind file (lazy for now, just reopen it)
+; Rewind file 
 ; HL - Pointer to file struct
 ;-----------------------------------------------------------------------
 FS_REWIND::
-	JP	FS_OPEN
+#local
+	PUSH	HL
+	POP	IX
+	LD	A, (IX+FS_FLAGS)	; Check the file is open
+	AND	1
+	RET	Z			; File is not open
+	
+	XOR	A
+	LD	(IX+FS_SECT), A		; Sector within cluster
+	LD	(IX+FS_OFFSET+0), A
+	LD	(IX+FS_OFFSET+1), A
+	LD	(IX+FS_OFFSET+2), A
+	LD	(IX+FS_OFFSET+3), A	; Clear offset within file
+	
+	CALL	FILE_GET_DIRENT		; Re open directory entry (for start cluster)
+	LD	DE, FATDIR_START_CLUSTER
+	ADD	HL, DE
+	LD	BC, (HL)		; Read in start cluster
+	LD	(IX+FS_CLUST), BC	; Save start cluster
+	LD	A, B
+	OR	C			; Check if start cluster is 0 (empty file)
+	JR	Z, SETEOF		
+	
+	LD	A, (IX+FS_FLAGS)	; Read in flags
+	AND	07Fh			; Clear EOF flag
+	LD	(IX+FS_FLAGS), A
+	RET
+SETEOF:	LD	A, (IX+FS_FLAGS)	; Read in flags
+	OR	080h			; Set EOF flag
+	LD	(IX+FS_FLAGS), A
+	RET
+#endlocal
 ;-----------------------------------------------------------------------	
 	
 	

@@ -8,12 +8,13 @@
 #data _RAM
 CURBANK		DS	1	; Programs current bank switching. Programs MUST use BIOS to change banks
 OLDSP		DS	2	; Save the programs stack
-BIOSSTKBTM	DS	16*2	; BIOS's stack
+BIOSSTKBTM	DS	32*2	; BIOS's stack
 BIOSSTK:
 ARG0		DS	1	; 8-bit arg - B
 ARG1		DS	2	; 16-bit arg - HL
 ARG2		DS	2	; 16-bit arg - DE
 RETCODE		DS	1 	; Program return code
+BIOS_FS		DS	FSLEN	; User FS is copied into here when performing FS operations
 #code _ROM
 
 ;---------------------------------------
@@ -31,7 +32,16 @@ BIOSTBL:
 	DW	B_PUTPX		; 10 - Put pixel [X in H, Y in L, set/reset in B]
 	DW	B_EXIT		; 11 - Exit program to monitor [return code in B]
 	DW	B_DELAY		; 12 - Delay for [HL] milliseconds
-	
+	; File calls
+	DW	B_OPEN		; 13 - Open file [pointer to FS in HL]
+	DW	B_CLOSE		; 14 - Close file [pointer to FS in HL]
+	; Data MUST NOT CROSS PAGE BOUNDARY
+	DW	B_READ		; 15 - Read sector from file [pointer to FS in HL, data target in DE]
+	DW	B_WRITE		; 16 - Write sector to file [pointer to FS in HL, data source in DE]
+	DW	B_REWIND	; 17 - Rewind file to start [pointer to FS in HL]
+	DW	B_CREATE	; 18 - Create a file [pointer to FS in HL]
+	DW	B_DELETE	; 19 - Delete a file [pointer to FS in HL]
+	DW	B_SETNAME	; 20 - Set file name in FS [pointer to FS in HL, pointer to null term string in DE]
 BIOS_MAXCALL	equ ((.-BIOSTBL)/2)
 ;---------------------------------------
 
@@ -262,3 +272,66 @@ B_DELAY:
 	CALL	DELAY
 	RET
 #endlocal
+
+
+; Copy userspace FS (in ARG1) to BIOS FS
+FS_BIOS_BANKCOPY:
+#local
+	LD	HL, (ARG1)
+	LD	A, (CURBANK)
+	
+
+	RET
+#endlocal
+
+
+;---------------------------------------
+; 13 - Open file [pointer to FS in ARG1]
+B_OPEN:
+#local
+	RET
+#endlocal
+;---------------------------------------
+; 14 - Close file [pointer to FS in ARG1]
+B_CLOSE:
+#local
+	RET
+#endlocal
+;---------------------------------------
+; 15 - Read sector from file [pointer to FS in ARG1, data target in ARG2]
+B_READ:
+#local
+	RET
+#endlocal
+;---------------------------------------
+; 16 - Write sector to file [pointer to FS in ARG1, data source in ARG2]
+B_WRITE:
+#local
+	RET
+#endlocal
+;---------------------------------------
+; 17 - Rewind file to start [pointer to FS in ARG1]
+B_REWIND:
+#local
+	RET
+#endlocal
+;---------------------------------------
+; 18 - Create a file [pointer to FS in ARG1]
+B_CREATE:
+#local
+	RET
+#endlocal
+;---------------------------------------
+; 19 - Delete a file [pointer to FS in ARG1]
+B_DELETE:
+#local
+	RET
+#endlocal
+;---------------------------------------
+; 20 - Set file name in FS [pointer to FS in ARG1, pointer to null term string in ARG2]
+B_SETNAME:
+#local
+	RET
+#endlocal
+
+

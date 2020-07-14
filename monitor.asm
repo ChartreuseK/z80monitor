@@ -666,7 +666,8 @@ CMD_PROGRAM:
 	LD	IX, MON_FS
 	CALL	FS_READFILE	; Read entire file to address
 	
-	
+	LD	HL, MON_FS
+	CALL	FS_CLOSE
 	
 	;RET	; Do nothing for now
 
@@ -1053,7 +1054,7 @@ STR_LCDBANNER:
 	.ascii "Chartreuse Z80 Booted",0
 	
 STR_BANNER:
-	.ascii "Chartreuse Z80 Monitor v0.3.1.ASDASD",10,13
+	.ascii "Chartreuse Z80 Monitor v0.3.2",10,13
 	.ascii "========================================",10,13,0
 
 STR_NL:

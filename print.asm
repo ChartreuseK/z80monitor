@@ -1,6 +1,8 @@
 ; Various console print format routines
 ;
 
+; Print a decimal number
+
 ;--------
 ; Print a hex byte to the console
 ;  A - byte
