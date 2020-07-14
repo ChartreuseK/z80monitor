@@ -970,14 +970,11 @@ DISP_PROMPT:
 #include "parse.asm"	; String parsing routines
 #include "print.asm"	; Console printing routines
 #include "disass.asm"	; Dissassembler
-;#include "fatfs.asm"	; (OLD) FAT filesystem
-#include "fatv3.asm"
-;;;#include "fs.asm"	; User File routines
+#include "fatv3.asm"	; FAT filesystem and user filesystem commands
 #include "util.asm"	; Utility functions
 #include "math.asm"	; Math helper routines
 #include "display.asm"	; AVR NTSC display routines
-;#include "serialterm.asm" ; Basic serial terminal
-#include "bios.asm"
+#include "bios.asm"	; BIOS call routines for userspace
 #include "teensy.asm"	; Commands to talk with the Teensy peripheral
 
 ;===============================================================================
