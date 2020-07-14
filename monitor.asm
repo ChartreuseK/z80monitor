@@ -895,6 +895,18 @@ CHKFAIL:
 	RET
 
 #endlocal
+
+
+
+
+CMD_HELP:
+	LD	HL, STR_HELP
+	CALL	PRINTN
+	RET
+
+
+
+
 ; Send a device and address to the Teensy
 ; B - device
 ; C - addr
@@ -947,6 +959,7 @@ TEENSY_READ:
 ; Longest match must be tested first
 CMDSTBL:
 	DM ".",0 \ DW CMD_CHADDR	; Change address
+	DM "?",0 \ DW CMD_HELP		; Help
 	DM "DEL",0 \ DW CMD_TEMP_DFILE	; Delete file
 	DM "DIR",0 \ DW CMD_LIST	; List root directory
 	DM "DIS",0 \ DW CMD_DISASS	; Disassemble
@@ -954,11 +967,33 @@ CMDSTBL:
 	DM "D",0 \ DW CMD_DEPOSIT	; Deposit
 	DM "E",0 \ DW CMD_EXAMINE	; Examine
 	DM "GO",0 \ DW CMD_RUN		; Run (goto address)
+	DM "HELP",0 \ DW CMD_HELP
 	DM "NEW",0 \ DW CMD_TEMP_CFILE	; Create new file
 	DM "PL",0 \ DW CMD_PC_LOAD	; PC load
 	DM "READ",0 \ DW CMD_COPYFILE	; Read file into memory
 	DM "TIME",0 \ DW CMD_TIME	; Time
 	DB 0 \ DW CMD_INVAL		; Invalid command (catchall)
+
+
+STR_HELP:
+	.ascii "Current address is shown in prompt.",10,13
+	.ascii "Addresses and numbers are hexadecimal",10,13
+	.ascii ".       - Change current address",10,13
+	.ascii "?       - Display this help screen",10,13
+	.ascii "DEL fn  - Delete file fn",10,13
+	.ascii "DIR     - List directory on CF card",10,13
+	.ascii "DIS [n] - Disassembly n instructions",10,13
+	.ascii "DL fn   - Load fn from disk and run",10,13
+	.ascii "D       - Enter deposit mode",10,13
+	.ascii "E [n]   - Examine n bytes ",10,13
+	.ascii "GO [a]  - Execute at addr a or current",10,13
+	.ascii "HELP    - Display this help screen",10,13
+	.ascii "NEW fn  - Create a new empty file fn",10,13
+	.ascii "PL fn   - Load fn from PC and run",10,13
+	.ascii "READ fn - Read file fn into memory",10,13
+	.ascii "TIME    - Displays the current time",10,13
+	db 0
+
 
 ; Display the prompt
 ;  '$ABCD> '
