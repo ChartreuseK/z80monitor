@@ -907,52 +907,6 @@ CMD_HELP:
 
 
 
-; Send a device and address to the Teensy
-; B - device
-; C - addr
-TEENSY_REQ:
-	CALL	TEENSY_WRITE	; Send the device first
-	LD	B, C
-	JR	TEENSY_WRITE	; Then the address (tail call)
-
-; Read a byte from device & addr from the Teensy
-; B - device
-; C - addr
-; Returns:
-; A - byte val
-TEENSY_RDDEV:
-	CALL	TEENSY_REQ
-	JR	TEENSY_READ
-
-; Write a byte to a device & addr in the Teensy
-; B - Device
-; C - Addr
-; A - Value
-TEENSY_WRDEV:
-	PUSH	AF
-	CALL	TEENSY_REQ
-	POP	AF
-	JR	TEENSY_WRITE
-
-; Send a byte to the teensy
-; B - byte
-TEENSY_WRITE:
-	IN	A, (PIO_C)	; Read in status
-	BIT	7,A		; Check if output buffer full
-	JR	Z, TEENSY_WRITE
-
-	LD	A, B
-	OUT	(PIO_A), A
-	RET
-; Read a byte from the teensy
-; Returns A - byte
-TEENSY_READ:
-	IN	A, (PIO_C)	; Check status
-	BIT	5, A		; Check if input buffer full
-	JR	Z, TEENSY_READ
-	
-	IN	A, (PIO_A)
-	RET
 
 ; Long string commands table
 ; Commands which are prefixes of others must come last
@@ -1024,11 +978,12 @@ DISP_PROMPT:
 #include "display.asm"	; AVR NTSC display routines
 ;#include "serialterm.asm" ; Basic serial terminal
 #include "bios.asm"
+#include "teensy.asm"	; Commands to talk with the Teensy peripheral
 
 ;===============================================================================
 ;===============================================================================
 ; Constants
-PORT_PIO	equ 0x00	; 8255 PIO
+PORT_PIO	equ 0x00	; 8255 PIO (Teensy and display (atmega))
 PORT_LCD	equ 0x40	; Shared with KBD in port (Write only)
 PORT_KBD	equ 0x40	; Shared with LCD out port (Read only)
 PORT_CF		equ 0xC0	; 8-bit IDE interface, CF cards only
