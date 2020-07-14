@@ -712,16 +712,17 @@ CMD_TEMP_CFILE:
 	PUSH	HL		; Save start pointer
 	CALL	EXTRACTARG	; Extract argument (null terminate it)
 	POP	HL		; Restart pointer to string
-	CALL	FS_CREATE
-	JR	NC, CMD_TEMP_CFILE2
-	CALL	PRINTBYTE
-	LD	HL, STR_CREATEERR
-	CALL	PRINTN
 	
-CMD_TEMP_CFILE2:
+	
+	LD	DE, MON_FS
+	CALL	FS_SETFILENAME
+	LD	HL, MON_FS
+	CALL	FS_CREATE
+	RET	NC
+	CALL	PRINTI
+	.ascii "FS: Failed to create file", 10, 13, 0
 	RET
-STR_CREATEERR:
-	.ascii " - Failed to create file", 10, 13, 0
+	
 
 
 CMD_TEMP_DFILE:
@@ -734,14 +735,15 @@ CMD_TEMP_DFILE:
 	PUSH	HL		; Save start pointer
 	CALL	EXTRACTARG	; Extract argument (null terminate it)
 	POP	HL		; Restart pointer to string
+	LD	DE, MON_FS
+	CALL	FS_SETFILENAME
+	LD	HL, MON_FS
 	CALL	FS_DELETE
-	JR	NC, CMD_TEMP_DFILE2
-	CALL	PRINTBYTE
+	RET	NC
 	CALL	PRINTI
-	.ascii " - Failed to delete file",10,13,0
-	
-CMD_TEMP_DFILE2:
+	.ascii "FS: Failed to delete file",10,13,0
 	RET
+	
 ; Load a program from the PC (through teensy) into memory and run
 ; Program NAME sent to PC, and NAME.COM is returned if it exists
 CMD_PC_LOAD:
@@ -915,7 +917,7 @@ CMDTBL:
 	DB 'P'	; Load program to memory and run
 	DB 'M'	; Load program from PC and run
 	DB 'Z'	; TEMP - Create file of specified name
-	DB 'U'	; TEMP - Create file of specified name
+	DB 'U'	; TEMP - Delete file of specified name
 	DB 0	; End of table/invalid command
 CMDTBLJ:
 	DW CMD_CHADDR

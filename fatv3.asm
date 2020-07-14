@@ -54,7 +54,9 @@ FATDIR_START_CLUSTER equ 1Ah
 FATDIR_SIZE 	     equ 1Ch
 
 DIRENTSIZ	EQU	32
-
+ENT_ATTR	equ	11		; Attribute byte
+ENT_FS		equ	0x1C		; Size of file (DWORD)
+ENT_CLUST	equ	0x1A		; Starting cluster
 
 
 ; File structure
@@ -464,8 +466,6 @@ DONE:
 ; HL - points to first byte of entry
 PRINTENT:
 #local
-ENT_ATTR	equ	11		; Attribute byte
-ENT_FS		equ	0x1C		; Size of file (DWORD)
 	
 	LD	A, (HL)			; First byte of filename
 	AND	A
@@ -709,7 +709,6 @@ CLUST2LBA:
 ;-----------------------------------------------------------------------
 FAT_FINDFILE:
 #local
-ENT_ATTR	equ	11		; Attribute byte
 	PUSH	HL
 	POP	IX			; Save filename in IX
 	
@@ -1474,11 +1473,177 @@ SETEOF:	LD	A, (IX+FS_FLAGS)	; Read in flags
 	
 	
 	
-
+;-----------------------------------------------------------------------	
+; Create a new file with the specified name
+; HL - Pointer to FS struct with name filled in
+;-----------------------------------------------------------------------	
 FS_CREATE::
+#local
+	PUSHALL 
+	CALL	PRINTI
+	.ascii "FS: DEBUG FS_CREATE: ",10,13,0
+	POPALL
+	PUSH	HL			; Save filename/struct
+	 ; First check if the file already exists
+	 CALL	FAT_FINDFILE		; Search for file
+	 JP	NC, EXISTS		; Fail if file already exists
+	 ; Find first free or deleted entry
+	
+	 LD	HL, FAT_ROOTLBA		; Start of root directory
+	 LD	DE, LBA
+	 CALL	COPY32
+	 LD	HL, SECTOR
+	 CALL	CF_READ			; First sector of root directory
+	 LD	BC, (BPB_DIRENTS)	; Entries in root directory
+	 LD	HL, SECTOR		; Start of our sector buffer
+	POP	IX			; Save filename back into IX
+	
+	
+	PUSH	BC			; (1) Save entries 
+DIRLOOP:
+	PUSH HL
+	LD	A,'.' \ CALL PRINTCH
+	POP HL
+	 LD	A, (HL)			; Check first byte of name
+	 CP	0E5h			; Deleted entry
+	 JR	Z, FOUND
+	 AND	A			; Empty entry
+	 JR	Z, FOUND
+	
+	POP	BC			; (1) Restore counter
+	DEC	BC			; Dec counter
+	LD	A, B
+	OR	C
+	JP	Z, NOSPACE		; If no entries left then unable to create
+	PUSH	BC			; (1) Save counter
+	
+	 LD	DE, DIRENTSIZ
+	 ADD	HL, DE			; Advance to the next directory entry
+	 LD	DE, SECTOR+512		; End of sector
+	 CMP16	DE			; Compare HL with DE
+	 JR	C, NOLOAD		; If < SECTOR+512 then we don't need to load next
+	 ; Otherwise Load next sector
+	 LD	HL, LBA
+	 LD	DE, 1
+	 CALL	ADD32_16		; Increment LBA
+	 LD	HL, SECTOR
+	 CALL	CF_READ
+	 LD	HL, SECTOR		; Reset HL
+NOLOAD:
+	 JP	DIRLOOP			;
+FOUND:
+	POP BC				; (1) Pop counter 
+	; Found a free entry point (in HL)
+	; Initialize this entry
+	PUSH	HL			; Save pointer to entry
+	 PUSH	IX
+	 POP	DE
+	 LD	B, 11
+COPYNAME:				; Copy filename to entry
+	 LD	A, (DE)
+	 LD	(HL), A
+	 INC	HL
+	 INC	DE
+	 DJNZ	COPYNAME
+	 XOR	A
+	 LD	(HL), A	\ INC HL	; 0B Attributes
+	 LD	(HL), A	\ INC HL	; 0C Unused/extra attributes
+	 LD	(HL), A	\ INC HL	; 0D Unused/Fine create time
+	 LD	(HL), A	\ INC HL	; 0E Unused
+	 LD	(HL), A	\ INC HL	; 0F Unused
+	 LD	(HL), A	\ INC HL	; 10 Unused
+	 LD	(HL), A	\ INC HL	; 11 Unused
+	 LD	(HL), A	\ INC HL	; 12 Unused
+	 LD	(HL), A	\ INC HL	; 13 Unused
+	 LD	(HL), A	\ INC HL	; 14 Unused
+	 LD	(HL), A	\ INC HL	; 15 Unused
+	 LD	(HL), A	\ INC HL	; 16 (2) Last modified time
+	 LD	(HL), A	\ INC HL	; 17
+	 LD	(HL), A	\ INC HL	; 18 (2) Last modified date
+	 LD	(HL), A	\ INC HL	; 19
+	 LD	(HL), A	\ INC HL	; 1a (2) Start cluster
+	 LD	(HL), A	\ INC HL	; 1b 
+	 LD	(HL), A	\ INC HL	; 1c (4) File length
+	 LD	(HL), A	\ INC HL	; 1d
+	 LD	(HL), A	\ INC HL	; 1e
+	 LD	(HL), A	\ INC HL	; 1f
+	 LD	HL, SECTOR
+	 CALL	CF_WRITE
+	 CALL	PRINTNL
+	POP	HL			; Return pointer to entry
+	AND	A			; Clear carry
 	RET
+NOSPACE:				; No free entries left
+EXISTS:
+	CALL	PRINTNL
+	SCF				; File already exists 
+	RET
+#endlocal
+;-----------------------------------------------------------------------	
+
+;-----------------------------------------------------------------------
+; Delete the file with the specified name
+; HL - Pointer to FS struct with name filled in
+;-----------------------------------------------------------------------	
 FS_DELETE::
+	PUSHALL 
+	CALL	PRINTI
+	.ascii "FS: DEBUG FS_DELETE:",10,13,0
+	POPALL
+	CALL	FAT_FINDFILE		; Search for file
+	JP	C, FAIL			; Fail if file not found
+	; HL points to directory entry of file
+	LD	(HL), 0E5h		; Mark file as deleted
+	LD	DE, ENT_CLUST		; Offset to cluster
+	ADD	HL, DE
+	LD	BC, (HL)		; Read in starting cluster
+	
+	PUSH HL \ PUSH BC 
+	CALL PRINTWORD
+	LD	A, "-" \ CALL PRINTCH
+	POP BC \ POP HL
+	
+	PUSH	BC			; Save cluster
+	LD	(HL), 0	\ INC HL	; Clear starting cluster
+	LD	(HL), 0	
+	LD	HL, SECTOR
+	CALL	CF_WRITE		; Write updated dir to disk
+
+	POP	DE			; Restore current cluster
+CLEARLOOP:
+	LD	A, D
+	OR	E
+	JR	Z, DONE			; Check is already empty	
+	PUSH	DE			; Save current cluster
+	CALL	FAT_GET			; Value of next cluster in chain
+	POP	HL			; Previous cluster
+	EX	DE, HL			; Previous cluster into DE
+	LD	BC, 0000h		; Mark cluster as free
+	PUSH	HL			; Save next cluster
+	CALL	FAT_SET			; previous cluster now marked as free
+	POP	DE			; Next cluster
+
+	PUSH	DE
+	 PUSH	DE \ POP BC
+	 CALL	PRINTWORD
+	 LD	A, '-' \ CALL PRINTCH
+	POP	DE
+	; Now check if we're at the end of the chain
+	LD	A, 0FFh
+	CP	D			; FF - D
+	JR	NZ, CLEARLOOP		; < FF00 
+	; Cluster >FF00
+	LD	A, 0F5h
+	CP	E
+	JR	NC, CLEARLOOP		; Cluster < FFF5
+DONE: ; File is empty, no need to do any more.
+	CALL	PRINTNL
+	AND	A			
 	RET
+FAIL:
+	SCF				; No such file
+	RET
+;-----------------------------------------------------------------------	
 	
 
 ;;;;;
