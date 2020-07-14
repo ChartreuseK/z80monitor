@@ -415,12 +415,12 @@ FAT_DIR_ROOT::
 	CALL	CF_READ			; Read in first sector of directory
 	
 	CALL	PRINTI
-	.ascii "Filename       RO   Size (HEX)",13,10
+	.ascii "Filename       RO   Size (HEX) start",13,10
 STR_LISTBREAK:
-	.ascii "------------------------------",0
+	.ascii "------------------------------------",0
 	      ; 0         1         2         3         4
 	      ; 01234567890123456789012345678901234567890
-	      ; FILENAME EXT   R    FILESIZE
+	      ; FILENAME EXT   R    FILESIZE   CLUS
 	CALL	PRINTNL
 	LD	BC, (BPB_DIRENTS)	; Entries in root directory
 	LD	HL, SECTOR		; Start of our sector buffer
@@ -487,7 +487,7 @@ PRINTENT:
 	; We want our printed format to be:
 	; 0         1         2         3         4
 	; 01234567890123456789012345678901234567890
-	; FILENAME EXT   R    FILESIZE
+	; FILENAME EXT   R    FILESIZE   CLUS
 	; or
 	; DIRNAME  EXT        <DIR>   
 	
@@ -526,11 +526,19 @@ AFTER1:
 	LD	B, (IX+ENT_FS+1)		; Low word of filesize
 	LD	C, (IX+ENT_FS+0)		
 	CALL	PRINTWORD
-	CALL	PRINTNL
-	RET
+	;CALL	PRINTNL
+	;RET
+	JR	CLUST
 ISDIR:
 	CALL	PRINTI
-	.ascii	"<DIR>",10,13,0
+	.ascii	"<DIR>   ",0
+	;RET
+CLUST:
+	CALL	PRINTI
+	.ascii "   ",0
+	LD	BC, (IX+ENT_CLUST)
+	CALL	PRINTWORD
+	CALL	PRINTNL
 	RET
 SPACE:
 	LD	A, ' '
@@ -843,8 +851,8 @@ FAT_GETCLUSTER:
 	
 NEXT:
 	LD	BC, (HL)		; Read in entry
-	LD	A, D
-	OR	E
+	LD	A, B
+	OR	C
 	JR	Z, FOUND		; Found free entry
 	INC HL \ INC HL			; Next entry
 	INC DE				; Keep track of cluster #
@@ -905,6 +913,7 @@ NAMEL:
 	JR	Z, DONE		; Once we hit a null we're done
 	CP	'.'	
 	JR	Z, DOEXT	; Or if we hit a dot
+	AND	0DFH		; Force to uppercase
 	LD	(DE), A		; Otherwise copy
 	INC	HL
 	INC	DE
@@ -930,6 +939,7 @@ EXTLOOP:
 	LD	A, (HL)
 	AND	A
 	JR	Z, DONE
+	AND	0DFH		; Force to uppercase
 	LD	(DE), A
 	INC	DE
 	DJNZ	EXTLOOP
@@ -988,9 +998,11 @@ ISEND:
 FLAG1:
 	 LD	(IX+FS_FLAGS), A
 	POP	HL			; Restore pointer for caller
+	AND	A			; Clear carry, success
 	RET
 FAIL:
 	POP	HL
+	SCF
 	RET
 #endlocal
 ;-----------------------------------------------------------------------
@@ -1048,6 +1060,7 @@ FS_CLOSE::
 	; We could also update the modified time here if desired
 	LD	HL, SECTOR
 	CALL	CF_WRITE		; Write updated directory to disk
+	AND	A			; Clear carry, success
 	RET
 #endlocal
 ;-----------------------------------------------------------------------
@@ -1232,20 +1245,12 @@ NOINCFIX:
 	AND	A			; Clear carry
 	RET
 EOFMARK2:
-	PUSHALL
-	CALL	PRINTI
-	.ascii "2",10,13,0
-	POPALL
 	LD	A, (IX+FS_FLAGS)
 	OR	080h
 	LD	(IX+FS_FLAGS), A
 	; Don't advance clust or sect
 	JR	NOINCFIX
 EOFMARK:
-	PUSHALL
-	CALL	PRINTI
-	.ascii "1",10,13,0
-	POPALL
 	LD	A, (IX+FS_FLAGS)
 	OR	080h
 	LD	(IX+FS_FLAGS), A
@@ -1284,6 +1289,12 @@ FS_WRITE::
 	 AND	1
 	 JP	Z, FAIL		; File is not open
 	 LD	A, (IX+FS_FLAGS)
+	 
+	 PUSHALL
+	 CALL	PRINTI
+	 .ascii "1",0
+	 POPALL
+	 
 	 ; Set modified flag while we're here.
 	 OR	2h
 	 LD	(IX+FS_FLAGS), A	; Modified set since we're writing
@@ -1292,6 +1303,13 @@ FS_WRITE::
 
 	 ; Address specified Cluster+sector
 	 LD	DE, (IX+FS_CLUST)
+	 LD	A, D
+	 OR	E
+	 CALL	Z, EOF_ALLOC	; At start of empty file, allocate
+	 PUSHALL
+	 CALL	PRINTI
+	 .ascii "2",0
+	 POPALL
 	 CALL	CLUST2LBA
 	 LD	HL, LBA
 	 LD	D, 0
@@ -1323,8 +1341,8 @@ FS_WRITE::
 	INC	(IX+FS_SECT)	; Next sector within cluster
 	LD	A, (BPB_CLUSTSIZE)
 	CP	(IX+FS_SECT)	; 
-	JR	C, FAIL		; FS_SECT was >= CLUSTSIZE already, something is wrong
-	JR	NZ, DONE	; More sectors still in cluster
+	JP	C, FAIL		; FS_SECT was >= CLUSTSIZE already, something is wrong
+	JP	NZ, DONE	; More sectors still in cluster
 	; No more sectors in current cluster, check if there's a cluster
 	; already allocated after this one
 	LD	DE, (IX+FS_CLUST)
@@ -1352,17 +1370,22 @@ EOF_ALLOC:	; We're at the EOF and we need to write data
 	; We need to allocate a new cluster to this file
 	PUSH	IX
 	 CALL	FAT_GETCLUSTER	; Get a new cluster in DE
-	 JR	C, NOSPACE
+	 JP	C, NOSPACE
 	 ; Append to chain
 	 POP	IX \ PUSH IX	; Restore FS pointer
 	 PUSH	DE		; Save new cluster
 	  LD	BC, 0FFFFh	; End of file marker
    	  CALL	FAT_SET
 	  LD	DE, (IX+FS_CLUST)
+	  LD	A, D
+	  OR	E		; Test if empty file with null cluster
+	  JR	Z, EMPTYFILE
 	 POP	BC		; Restore new cluster into BC
 	 PUSH	BC		; Keep saved
-	  CALL	FAT_SET		; Set current cluster's next to be the new one
+	  ; Skip if we're empty
+	  CALL	FAT_SET	; Set current cluster's next to be the new one
 	 POP	DE		; Next cluser #
+FINISH:
 	POP 	IX
 	LD	(IX+FS_CLUST), DE	; Current is our new cluster
 	LD	(IX+FS_SECT), 0		; First sector of new cluster
@@ -1370,10 +1393,21 @@ EOF_ALLOC:	; We're at the EOF and we need to write data
 	AND	07Fh		; Remove EOF flag
 	LD	(IX+FS_FLAGS), A
 	RET
-	
+EMPTYFILE:
+	; We need to save this new cluster into the directory entry
+	CALL	FILE_GET_DIRENT	; Get our directory entry in HL
+	POP	BC		; New cluster #
+	LD	(IX+FS_CLUST), BC	; Save into file handle
+	LD	DE, ENT_CLUST	; Cluster of this entry
+	ADD	HL, DE
+	LD	(HL),BC		; Save into directory entry
+	LD	HL, SECTOR
+	CALL	CF_WRITE	; Update directory info
+	LD	DE, (IX+FS_CLUST)
+	JP	FINISH	
 NOSPACE:
 	POP	IX
-	LD	A, 1
+	LD	A, 1		; 1 indicates out of space
 	JR	FAIL2
 FAIL:	LD	A, 0FFh		; Indicate argument error
 FAIL2:	POP	BC
@@ -1646,46 +1680,5 @@ FAIL:
 ;-----------------------------------------------------------------------	
 	
 
-;;;;;
-; OLD FATv2 calls, need to be populated/modified
-
-
-
-; Add a new file to the directory
-; Name should be in FAT_FILENAME already
-FAT_NEWFILE::
-; Delte a file
-; Filename in FAT_FILENAME
-FAT_DELETEFILE::
-;-----------
-; Advance to the next cluster
-FAT_NEXTCLUST::
-; Open a file
-; Filename in FAT_FILENAME
-FAT_OPENFILE::
-;--------
-; Copies the name.ext (8.3) filename into the FILENAME buffer
-; in space padded fixed width format 8+3 'NAME    EXT'
-FAT_SETFILENAME::
-;------
-; Clear the filename to blank (all spaces)
-CLEARFN:
-;-----
-; Read entire current file into memory
-FAT_READFILE::
-
-;-------
-; Is the current cluster the end of the chain
-; Resets C flag if it is, sets C if not
-; BAD: Assuming FAT16 for now
-FAT_ISCLUSTEND:
-;-----
-; Read entire current file into memory in specified bank
-; A:HL - Destination
-FAT_READFILE_BANK::
-; Calculate free disk space
-; 
-FAT_DISKFREE::
-	RET
 
 #endlocal

@@ -15,6 +15,7 @@ ARG1		DS	2	; 16-bit arg - HL
 ARG2		DS	2	; 16-bit arg - DE
 RETCODE		DS	1 	; Program return code
 BIOS_FS		DS	FSLEN	; User FS is copied into here when performing FS operations
+NAMEBUF		DS	13	; 8.3 + NULL
 #code _ROM
 
 ;---------------------------------------
@@ -275,12 +276,44 @@ B_DELAY:
 
 
 ; Copy userspace FS (in ARG1) to BIOS FS
-FS_BIOS_BANKCOPY:
+FS_USER_BIOS:
 #local
+	LD	IX, BIOS_FS
 	LD	HL, (ARG1)
-	LD	A, (CURBANK)
-	
+	LD	B, FSLEN
+LOOP:
+	PUSH	HL
+	PUSH	BC
+	 LD	A, (CURBANK)
+	 LD	B, A
+	 CALL	RAM_BANKPEEK
+	 LD	(IX), C
+	POP	BC
+	POP	HL
+	INC	HL
+	INC	IX
+	DJNZ	LOOP
+	RET
+#endlocal
 
+; Copy  BIOS FS to userspace FS (in ARG1)
+FS_BIOS_USER:
+#local
+	LD	IX, BIOS_FS
+	LD	HL, (ARG1)
+	LD	B, FSLEN
+LOOP:
+	PUSH	HL
+	PUSH	BC
+	 LD	A, (CURBANK)
+	 LD	B, A
+	 LD	C, (IX)
+	 CALL	RAM_BANKPOKE
+	POP	BC
+	POP	HL
+	INC	HL
+	INC	IX
+	DJNZ	LOOP
 	RET
 #endlocal
 
@@ -289,48 +322,178 @@ FS_BIOS_BANKCOPY:
 ; 13 - Open file [pointer to FS in ARG1]
 B_OPEN:
 #local
+	CALL	FS_USER_BIOS
+	
+	LD	HL, BIOS_FS
+	CALL	FS_OPEN
+	LD	B, 0			; Return value
+	JR	NC, SUCCESS
+	INC	B			; 1 indicates failure
+SUCCESS:
+	PUSH	BC
+	CALL	FS_BIOS_USER
+	POP	BC
 	RET
 #endlocal
 ;---------------------------------------
 ; 14 - Close file [pointer to FS in ARG1]
 B_CLOSE:
 #local
+	CALL	FS_USER_BIOS
+	
+	LD	HL, BIOS_FS
+	CALL	FS_CLOSE
+	LD	B, 0			; Return value
+	JR	NC, SUCCESS
+	INC	B			; 1 indicates failure
+SUCCESS:
+	PUSH	BC
+	CALL	FS_BIOS_USER
+	POP	BC
 	RET
 #endlocal
 ;---------------------------------------
 ; 15 - Read sector from file [pointer to FS in ARG1, data target in ARG2]
 B_READ:
 #local
+	CALL	FS_USER_BIOS
+	
+	LD	IX, BIOS_FS
+	
+	LD	HL, (ARG2)
+	LD	A, (CURBANK)
+	LD	C, A
+	CALL	NORMAL_ADDR
+	
+	CALL	FS_READ
+	; Read also returns A=0 for EOF with carry set, or A=FF for error
+	LD	B, 0			; Return value
+	JR	NC, SUCCESS
+	LD	B, A			; 
+	INC	B \ INC B		; 1 indicates error, 2 indicates EOF
+SUCCESS:
+	PUSH	BC
+	CALL	FS_BIOS_USER
+	POP	BC
 	RET
 #endlocal
 ;---------------------------------------
 ; 16 - Write sector to file [pointer to FS in ARG1, data source in ARG2]
 B_WRITE:
 #local
+	CALL	FS_USER_BIOS
+	
+	LD	IX, BIOS_FS
+	
+	LD	HL, (ARG2)
+	LD	A, (CURBANK)
+	LD	C, A
+	CALL	NORMAL_ADDR
+	
+	CALL	FS_WRITE
+	; Read also returns A=0 for out of space with carry set, or A=FF for error
+	LD	B, 0			; Return value
+	JR	NC, SUCCESS
+	LD	B, A			; 
+	INC	B \ INC B		; 1 indicates error, 2 indicates out of space
+SUCCESS:
+	PUSH	BC
+	CALL	FS_BIOS_USER
+	POP	BC
 	RET
 #endlocal
 ;---------------------------------------
 ; 17 - Rewind file to start [pointer to FS in ARG1]
 B_REWIND:
 #local
+	CALL	FS_USER_BIOS
+	
+	LD	HL, BIOS_FS
+	CALL	FS_REWIND
+	LD	B, 0			; Return value
+	JR	NC, SUCCESS
+	INC	B			; 1 indicates failure
+SUCCESS:
+	PUSH	BC
+	CALL	FS_BIOS_USER
+	POP	BC
 	RET
 #endlocal
 ;---------------------------------------
 ; 18 - Create a file [pointer to FS in ARG1]
 B_CREATE:
 #local
+	CALL	FS_USER_BIOS
+	
+	LD	HL, BIOS_FS
+
+	CALL	FS_CREATE
+	LD	B, 0			; Return value
+	JR	NC, SUCCESS
+	INC	B			; 1 indicates failure
+SUCCESS:
+	PUSH	BC
+	CALL	FS_BIOS_USER
+	POP	BC
 	RET
 #endlocal
 ;---------------------------------------
 ; 19 - Delete a file [pointer to FS in ARG1]
 B_DELETE:
 #local
+	CALL	FS_USER_BIOS
+	
+	LD	HL, BIOS_FS
+	CALL	FS_DELETE
+	LD	B, 0			; Return value
+	JR	NC, SUCCESS
+	INC	B			; 1 indicates failure
+SUCCESS:
+	PUSH	BC
+	CALL	FS_BIOS_USER
+	POP	BC
 	RET
 #endlocal
 ;---------------------------------------
 ; 20 - Set file name in FS [pointer to FS in ARG1, pointer to null term string in ARG2]
 B_SETNAME:
 #local
+	; Copy name from userspace
+	LD	HL, (ARG2)
+	LD	DE, NAMEBUF
+	LD	B, 12
+CNAME:
+	PUSH	BC
+	PUSH	HL
+	LD	A, (CURBANK)
+	LD	B, A
+	CALL	RAM_BANKPEEK
+	LD	A, C
+	POP	HL
+	POP	BC
+	LD	(DE), A
+	
+	INC	DE
+	INC	HL
+	DJNZ	CNAME
+	XOR	A
+	LD	(DE), A			; Force null terminate
+	
+	CALL	FS_USER_BIOS
+	
+	LD	HL, NAMEBUF
+	CALL	PRINTN
+	
+	LD	DE, BIOS_FS
+	LD	HL, NAMEBUF
+	CALL	FS_SETFILENAME
+	LD	B, 0			; Return value
+	JR	NC, SUCCESS
+	INC	B			; 1 indicates failure
+SUCCESS:
+	PUSH	BC
+	CALL	FS_BIOS_USER
+	POP	BC
 	RET
 #endlocal
 

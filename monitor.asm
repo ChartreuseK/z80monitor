@@ -122,8 +122,8 @@ GRAPHBNR:
 	INC	HL
 	DJNZ	GRAPHBNR
 	
-	;LD	A, 0x03		; 80 col bold
-	LD	A, 0x02		; 40 col bold
+	LD	A, 0x03		; 80 col bold
+	;LD	A, 0x02		; 40 col bold
 	CALL	DISP_LMODE
 	
 	
@@ -321,6 +321,7 @@ INTERACTIVE:
 	LD	(CURADDR), HL
 	RET
 #endlocal
+
 
 ;--------
 ; Dump one row of memory, up to 'A' bytes
@@ -597,6 +598,26 @@ CMD_LIST:
 	
 	
 	
+
+; Normalize far address C:HL to be in the low bank
+; with C only being in the low 4 bits
+NORMAL_ADDR:
+#local
+	LD	A, H
+	AND	80h
+	JR	Z, LOWBANK
+	SRL	C \ SRL	C
+	SRL	C \ SRL	C	; High bank to low bank
+	LD	A, H
+	AND	7Fh		; Convert address to be for low bank
+	LD	H, A
+LOWBANK:
+	LD	A, C
+	AND	0Fh		; Make sure only low bank listed
+	LD	C, A
+	RET
+#endlocal
+	
 CMD_COPYFILE:
 #local
 	INC	HL		; Skip command
@@ -613,13 +634,20 @@ CMD_COPYFILE:
 	CALL	PRINTN		; Print filename
 	POP	HL
 
-	CALL	FAT_SETFILENAME	; Set filename
+	LD	DE, MON_FS
+	CALL	FS_SETFILENAME	; Set filename
 	
-	CALL	FAT_OPENFILE
+	LD	HL, MON_FS
+	CALL	FS_OPEN
 	JR	C, NOFILE	; If failure to open
 	
 	LD	HL, (CURADDR)	; Address to load to
-	CALL	FAT_READFILE	; Read entire file to address
+	LD	A, (CURBANK)
+	LD	C, A		; Bank to load to
+	CALL	NORMAL_ADDR	; Normalize addr
+	
+	LD	IX, MON_FS
+	CALL	FS_READFILE	; Read entire file to address
 
 	RET
 NOFILE:
