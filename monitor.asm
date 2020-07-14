@@ -743,7 +743,46 @@ NOFILE:
 	RET
 #endlocal
 
+CMD_TEMP_CFILE:
+	INC	HL		; Skip command
+	CALL	SKIPWHITE	; Skip whitespace
+	LD	A, (HL)
+	AND	A
+	RET	Z		; If null terminator then no filename given
+	
+	PUSH	HL		; Save start pointer
+	CALL	EXTRACTARG	; Extract argument (null terminate it)
+	POP	HL		; Restart pointer to string
+	CALL	FS_CREATE
+	JR	NC, CMD_TEMP_CFILE2
+	CALL	PRINTBYTE
+	LD	HL, STR_CREATEERR
+	CALL	PRINTN
+	
+CMD_TEMP_CFILE2:
+	RET
+STR_CREATEERR:
+	.ascii " - Failed to create file", 10, 13, 0
 
+
+CMD_TEMP_DFILE:
+	INC	HL		; Skip command
+	CALL	SKIPWHITE	; Skip whitespace
+	LD	A, (HL)
+	AND	A
+	RET	Z		; If null terminator then no filename given
+	
+	PUSH	HL		; Save start pointer
+	CALL	EXTRACTARG	; Extract argument (null terminate it)
+	POP	HL		; Restart pointer to string
+	CALL	FS_DELETE
+	JR	NC, CMD_TEMP_DFILE2
+	CALL	PRINTBYTE
+	CALL	PRINTI
+	.ascii " - Failed to delete file",10,13,0
+	
+CMD_TEMP_DFILE2:
+	RET
 ; Load a program from the PC (through teensy) into memory and run
 ; Program NAME sent to PC, and NAME.COM is returned if it exists
 CMD_PC_LOAD:
@@ -916,6 +955,8 @@ CMDTBL:
 	DB 'C'  ; Copy file to memory
 	DB 'P'	; Load program to memory and run
 	DB 'M'	; Load program from PC and run
+	DB 'Z'	; TEMP - Create file of specified name
+	DB 'U'	; TEMP - Create file of specified name
 	DB 0	; End of table/invalid command
 CMDTBLJ:
 	DW CMD_CHADDR
@@ -928,6 +969,8 @@ CMDTBLJ:
 	DW CMD_COPYFILE
 	DW CMD_PROGRAM
 	DW CMD_PC_LOAD
+	DW CMD_TEMP_CFILE
+	DW CMD_TEMP_DFILE
 	DW CMD_INVAL	; Invalid command
 
 
@@ -954,6 +997,8 @@ DISP_PROMPT:
 #include "disass.asm"	; Dissassembler
 ;#include "fatfs.asm"	; (OLD) FAT filesystem
 #include "fatv2.asm"
+#include "fs.asm"	; User File routines
+
 #include "math.asm"	; Math helper routines
 #include "display.asm"	; AVR NTSC display routines
 ;#include "serialterm.asm" ; Basic serial terminal
@@ -1050,7 +1095,7 @@ STR_LCDBANNER:
 	.ascii "Chartreuse Z80 Booted",0
 	
 STR_BANNER:
-	.ascii "Chartreuse Z80 Monitor v0.3.1",10,13
+	.ascii "Chartreuse Z80 Monitor v0.3.1.ASDASD",10,13
 	.ascii "========================================",10,13,0
 
 STR_NL:

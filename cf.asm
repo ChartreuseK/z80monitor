@@ -203,7 +203,7 @@ LOOP:
 	OUT	(CF_DATA), A
 	INC 	HL
 
-	CALL	CF_LDATARDY	; Read odd byte
+	CALL	CF_LDATARDY	; write odd byte
 	LD	A, (HL)
 	OUT	(CF_DATA), A
 	INC 	HL

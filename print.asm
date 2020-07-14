@@ -137,3 +137,19 @@ PRINTNL:
 	CALL	PRINTCH
 	POP	AF
 	RET
+
+; Print inline message (after call)
+PRINTI:
+#local
+	POP	HL	; Start of string
+LOOP:
+	LD	A,(HL)
+	AND	A
+	JR	Z, END
+	CALL	PRINTCH
+	INC	HL
+	JR	LOOP
+END:
+	INC	HL
+	JP	HL
+#endlocal
