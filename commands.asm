@@ -178,9 +178,9 @@ DOPRINT:
 	
 	LD	A, '|'
 	CALL	PRINTCH
-
+#if HDSUPNL == 0
 	CALL	PRINTNL
-	
+#endif
 	POP	DE
 	POP	BC
 	RET
