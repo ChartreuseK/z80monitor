@@ -43,6 +43,9 @@ BIOSTBL:
 	DW	B_CREATE	; 18 - Create a file [pointer to FS in HL]
 	DW	B_DELETE	; 19 - Delete a file [pointer to FS in HL]
 	DW	B_SETNAME	; 20 - Set file name in FS [pointer to FS in HL, pointer to null term string in DE]
+	; Other calls
+	DW	B_GETARGS	; 21 - Get command line arguments [addr in HL, max length in B]
+	DW	B_MODE		; 22 - Set internal monitor mode flags [Value in B, flag # in L]
 BIOS_MAXCALL	equ ((.-BIOSTBL)/2)
 ;---------------------------------------
 
@@ -495,3 +498,55 @@ SUCCESS:
 #endlocal
 
 
+;---------------------------------------
+; 21 - Get command line arguments [addr in HL, max length in B]
+B_GETARGS:
+#local
+	LD	HL, (CMDARGS)		; Argument string
+	
+	LD	IX, (ARG1)
+	LD	A, (ARG0)		; Max length
+	LD	B, A
+LOOP:
+	LD	C, (HL)
+	INC	HL
+	PUSH	BC
+	PUSH	HL
+	 LD	A, (CURBANK)
+	 LD	B, A		; Bank
+	 PUSH	IX
+	 POP	HL		; Dest
+	 CALL	RAM_BANKPOKE	; Write character (C)
+	 INC	IX
+	POP	HL
+	POP	BC
+	
+	LD	A, C
+	AND	A		; Was this the null?
+	RET	Z
+	DJNZ	LOOP		; Keep going
+	RET
+#endlocal
+
+
+;---------------------------------------
+; 22 - Set internal monitor mode flags [Value in B, flag # in L]
+B_MODE:
+#local
+	LD	HL, (ARG1)
+	LD	H, 0
+	LD	A, L
+	CP	MODELEN		; Make sure that we have a flag with
+	JR	NC, INVALID	; the specified number
+	LD	DE, MODEBASE
+	ADD	HL, DE		; Index into mode flags
+	LD	A, (ARG0)
+	LD	(HL), A		; Write to mode flag
+	RET
+INVALID:
+	LD	A, L
+	CALL	PRINTBYTE
+	CALL	PRINTI
+	.ascii "invalid mode",10,13,0
+	RET
+#endlocal

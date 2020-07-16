@@ -11,17 +11,13 @@ CPU_FREQ	equ	8000000	; 8MHz (4000000 = 4MHz)
 ; OLD: 0x8B Map 1st page of ram to high 32kB, RAM Bank 3 to low (ROM emulation loader)
 ; 0xAB RAM Bank 2 to high 32kB, RAM Bank 3 to low (ROM emulation loader)
 ; (RAM BANK 0 and RAM BANK 1 for use of program
-MONITOR_BANK	equ	0xAB	; NEWROM + emu loader
+MONITOR_BANK	equ 0xAB	; NEWROM + emu loader
 
-COLS		equ	40		; Number of columns
+COLS		equ 40		; Number of columns
 #if COLS == 80
 DISP_MODE	equ 0x03	; 03h 80 column bold, 02h 40 column bold
-HDROWL		equ 16		; Row length for hexdump 
-HDSUPNL 	equ 0		; No need to supress newline
 #else
 DISP_MODE	equ 0x02
-HDROWL		equ 8		; Row length for hexdump
-HDSUPNL 	equ 1		; 8 fits exactly into 40 cols, supress NL
 #endif
 ; Delay constant for DELAY_MS
 ; Delay calculation:
@@ -36,22 +32,33 @@ MSDELAY		equ 1+ (((CPU_FREQ / 1000) - 115) / 65)
 
 #data _RAM,0xF800,0x800		; Limit to top 2kB of RAM
 ; Space for bank copying routines in memory
-RAM_BANKCOPY	DS	BANKCOPYLEN
-RAM_BANKPEEK	DS	BANKPEEKLEN
-RAM_BANKPOKE	DS	BANKPOKELEN
+RAM_BANKCOPY	DS BANKCOPYLEN
+RAM_BANKPEEK	DS BANKPEEKLEN
+RAM_BANKPOKE	DS BANKPOKELEN
 
-MON_FS		DS	FSLEN	; FS stuct for monitor use
+MON_FS		DS FSLEN	; FS stuct for monitor use
 
-DISPDEV:	DS 1		; Current display device
-INDEV:		DS 1		; Current input device
 LBUFLEN		equ 80
 LBUF:		DS LBUFLEN+1	; Line buffer (space for null)
 
 CURADDR:	DS 2		; Current address
 
-.align 2
-#code _ROM,0x0000,0x8000	
+
+; Program settable mode flags
+MODEBASE:
+DISPDEV		DS 1		; Current display device
+DISPMODE	DS 1		; Display line mode
+INDEV:		DS 1		; Current input device
+
+MODELEN		equ . - MODEBASE	; Number of mode flags
+
+
+HDROWL		DS 1		; Row length for hexdump
+
 #include "macros.asm"	; Assembler macros
+
+#code _ROM,0x0000,0x8000	
+
 ;===============================================================================
 ;===============================================================================
 ; Reset Vectors
@@ -115,9 +122,7 @@ START:
 	;LD	HL, STR_LCDBANNER
 	;CALL	LCDPUTS
 	
-	CALL	DELAY_MS
-	
-	CALL	CF_INIT
+	CALL	DELAY_MS	
 	
 	CALL	SERIAL_INIT
 	LD	A, 0
@@ -125,6 +130,19 @@ START:
 	
 	CALL	DISP_INIT
 	
+	; Setup mode flags
+	LD	B, MODELEN
+	LD	HL, MODEVALS
+	LD	IX, MODEBASE
+MODELOOP:
+	LD	A, (HL)
+	LD	(IX), A
+	INC	HL
+	INC	IX
+	DJNZ	MODELOOP
+	
+	CALL	UPDATE_HDROWL
+DOBANNER:
 	LD	A, 0x81		; 80 col graphics for banner
 	CALL	DISP_LMODE
 	LD	B, 80*3		; 3 lines of graphic data
@@ -135,7 +153,7 @@ GRAPHBNR:
 	INC	HL
 	DJNZ	GRAPHBNR
 	
-	LD	A, DISP_MODE	
+	LD	A, (DISPMODE)
 	CALL	DISP_LMODE
 	
 	
@@ -151,14 +169,12 @@ GRAPHBNR:
 	LDIR
 	
 	CALL	CF_DETECT
-	
-	
 	JR	NZ, DRVPRES
 	LD	HL, STR_NODRIVE
 	CALL	PRINTN
-	
 	JR	CMD_LOOP
 DRVPRES:
+	CALL	CF_INIT
 	LD	HL, STR_DRIVE
 	CALL	PRINTN
 	CALL	FAT_INIT
@@ -168,6 +184,16 @@ DRVPRES:
 WARM::
 	LD	SP, 0x0000	; Reset stack on warm restart
 	CALL	PRINTNL
+	
+	; Reset display
+	LD	A, (DISPMODE)
+	CALL	DISP_LMODE	; Make sure our mode is correct
+	LD	A, 02h		; Set cursor
+	CALL	DISP_WRITE
+	LD	A, '_'		; Underscore cursor
+	CALL	DISP_WRITE
+	CALL	UPDATE_HDROWL	
+	
 CMD_LOOP:
 	CALL 	DISP_PROMPT	; Display prompt + cur addr
 	CALL	GET_LINE	; Read in user input
@@ -182,13 +208,33 @@ HALT:
 #endlocal
 ;-----------------------------------------------------------------------
 
+UPDATE_HDROWL:
+#local
+	LD	A, (DISPMODE)
+	AND	1
+	JR	Z, COL80
+	LD	A, 16
+	LD	(HDROWL), A	; 16 bytes in a hex dump if 80 col
+	RET
+COL80:	
+	LD	A, 8
+	LD	(HDROWL), A	; 8 bytes for 40 col
+	RET
+#endlocal
+
 
 ;-----------------------------------------------------------------------
 ; Get a line of user input into LBUF
 ;-----------------------------------------------------------------------
 GET_LINE:
 #local
-	PUSH	BC
+	LD	HL, LBUF
+	LD	B, LBUFLEN
+CLR:
+	LD	(HL), 0
+	INC	HL
+	DJNZ	CLR
+	
 	LD	HL, LBUF
 	LD	C, LBUFLEN
 LINEL:
@@ -233,7 +279,7 @@ DONE:	LD	A, $0D		; CR
 	LD	A, $0A		; NL
 	CALL	PRINTCH
 	LD	(HL), 0		; Add trailing null terminator
-	POP	BC
+	
 	RET
 #endlocal
 ;-----------------------------------------------------------------------
@@ -275,7 +321,7 @@ NOMATCH:; And the user string is pointing just after the matched string
 	INC	IX		; Pointing at address of command
 	LD	BC, (IX)	; Command to run
 	PUSH	BC		; Push into return address
-	RET		; Jump into table, index into string in BC
+	RET		; Jump into table, index into string in HL
 
 #endlocal
 ;-----------------------------------------------------------------------
@@ -466,3 +512,10 @@ STR_GRAPHIC_BANNER:
 	DB $32,$19,$0a,$33,$10,$00,$28,$31,$10,$25,$1a,$0a,$30,$05,$22,$26 
 	DB $26,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00 
 	DB $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+
+MODEVALS:
+	DB 0		; Display device
+	DB DISP_MODE	; Display mode
+	DB 0		; Input device
+
+MONITOR_SIZE	equ .	; Monitor starts at 0

@@ -1,9 +1,14 @@
 ;-----------------------------------------------------------------------
 ; Monitor interactive command line commands
 ;-----------------------------------------------------------------------
-
-
 #local	; Avoid polluting namespace
+
+#data _RAM
+
+CMDARGS:: DW 0 				; Pointer to command line arguments
+
+#code _ROM
+
 
 ; Long string commands table
 ; Commands which are prefixes of others must come last
@@ -80,23 +85,32 @@ MORE:
 	; Check if BC > 16
 	LD	A, B
 	AND	A
-	JR	NZ, ENOUGH
+	JR	NZ, ENOUGH	; > 256 no issue
 	LD	A, C
 	AND	A
-	JR	Z, DONE
-	CP	HDROWL
+	JR	Z, DONE		; 0 left, we're done
+	
+	LD	A, (HDROWL)
+	LD	E, A
+	LD	A, C
+	CP	E
+	
 	JR	C, SHORT
 	
 ENOUGH:
 	; Subtract 16 from BC
-	LD	A, -HDROWL
-	ADD	C
+	LD	A, (HDROWL)
+	LD	E, A
+	
+	LD	A, C
+	SUB	E
 	LD	C, A
-	LD	A, $FF
-	ADC	B		; Decrement B if no overflow happened
+	LD	A, B
+	SBC	0
 	LD	B, A
 	
-	LD	A, HDROWL
+	
+	LD	A, (HDROWL)
 	CALL	HEXDUMPROW	; Dump row, HL is advanced by count
 	JR	MORE		; Continue
 SHORT:
@@ -110,7 +124,7 @@ INTERACTIVE:
 	; TODO: Do we want this to be actually interactive?
 	; For now just dump one line and advance CURADDR
 	LD	HL, (CURADDR)
-	LD	A, HDROWL
+	LD	A, (HDROWL)
 	CALL	HEXDUMPROW	; Dump row, HL is advanced by count
 	LD	(CURADDR), HL
 	RET
@@ -146,7 +160,7 @@ BYTEL:
 	INC	HL
 	DJNZ	BYTEL
 	; Pad if short
-	LD	A, HDROWL
+	LD	A, (HDROWL)
 	SUB	E
 	LD	B, A
 	JR	Z, NOPAD
@@ -159,8 +173,16 @@ PADB:
 NOPAD:
 	
 	; Printable ASCII
+	LD	A, (DISPMODE)
+	AND	1		; Check if 40 or 80 cols
+	JR	Z, COL1		; 40 columns
 	LD	A, '|'
+	JR	COL2
+COL1:
+	LD	A, ' '
+COL2:
 	CALL	PRINTCH
+
 	LD	B, E
 	POP	HL		; Restart address
 ASCII:
@@ -176,11 +198,14 @@ DOPRINT:
 	CALL	PRINTCH
 	DJNZ	ASCII
 	
+	; Printable ASCII
+	LD	A, (DISPMODE)
+	AND	1		; Check if 40 or 80 cols
+	JR	Z, COL3		; 40 columns
 	LD	A, '|'
 	CALL	PRINTCH
-#if HDSUPNL == 0
+COL3:
 	CALL	PRINTNL
-#endif
 	POP	DE
 	POP	BC
 	RET
@@ -317,6 +342,14 @@ PADTEST:
 ; Invalid command handler
 ;-----------------------------------------------------------------------
 CMD_INVAL:
+	; Let's try and load command name given as a disk COM file
+	LD	HL, LBUF	; Return to start of line 
+	CALL	SKIPWHITE	; Make sure we even have a command...
+	LD	A, (HL)
+	AND	A
+	RET	Z		; No command, don't even try
+	DEC	HL		; Minus 1 since
+	JP	CMD_PROGRAM	; CMD_PROGRAM will increment
 	RET
 ;-----------------------------------------------------------------------
 
@@ -470,6 +503,9 @@ CMD_PROGRAM:
 	
 	PUSH	HL		; Save start pointer
 	CALL	EXTRACTARG	; Extract argument (null terminate it)
+	; Save pointer to any arguments
+	INC	HL
+	LD	(CMDARGS), HL
 	POP	HL		; Restart pointer to string
 	
 	LD	DE, MON_FS
@@ -596,8 +632,11 @@ CMD_PC_LOAD:
 	JP	Z, NOFILE	; If null terminator then no filename given
 	
 	PUSH	HL		; Save start pointer
-	CALL	EXTRACTARG	; Extract argument (null terminate it)
+	 CALL	EXTRACTARG	; Extract argument (null terminate it)
+	 INC 	HL		; Skip null
+	 LD	(CMDARGS), HL	; Save argument string
 	POP	HL		; Restart pointer to string
+	
 	
 	LD	B, 0x10		; Request for program load
 	CALL	TEENSY_WRITE

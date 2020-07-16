@@ -177,7 +177,7 @@ EXTRACTARG:
 	INC	HL
 	JR	EXTRACTARG
 ENDN:
-	LD	HL, 0
+	;LD	HL, 0		; Leave pointing to null instead
 	RET
 END:
 	XOR	A		; 0
